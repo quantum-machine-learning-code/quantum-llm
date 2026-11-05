@@ -1,0 +1,5 @@
+# Keep LF line endings across Windows and WSL/Linux checkouts
+* text=auto eol=lf
+
+# Result figures are binary, never apply text conversion
+*.png binary
