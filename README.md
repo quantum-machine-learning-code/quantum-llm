@@ -14,6 +14,8 @@
 
 ## 快速结论（5-Seed 受控实验结果）
 
+> **⚠ 2026-11-07 语料审查（[REVIEW.md 第 7 节](docs/REVIEW.md)，[`audit_corpus.py`](experiments/audit_corpus.py)）**：训练集 1668 字符是同一段 417 字符文本**重复 4 遍**（unique 4-gram 仅 22.4%）；所谓「独立未见句验证集」在模型实际使用的因果上下文长度 `k=4` 上，有 **90.2%** 的 token 上下文在训练集中出现过。因此 `val PPL 4.29` 只能读作**同分布重组句的迁移**，不是未见分布泛化，也不能作为量子层带来泛化能力的证据。原始统计见 [`docs/corpus_audit.json`](docs/corpus_audit.json)。
+
 > **方法学审查要点（详见 [`docs/REVIEW.md`](docs/REVIEW.md)）**：
 > 1. **为什么初版模型（`51e3ad4`）卡在 loss `~2.5` 且必然生成 `A qubit can hold the the the...`？**
 >    初版 `TinyLM` 把 `(B, T, Q)` 直接展平为 `(B*T, Q)` 逐位置独立过变换层，位置 $t$ 之间**无任何跨时间步交互**，`--seq-len 16` 实际退化为 **$k=1$ 无记忆二元语法（Bigram）模型**。在该语料上，任意 $k=1$ 模型的信息论交叉熵下界为 **`1.9701` nats（PPL `7.17`）**，且精确 $k=1$ 查表 Oracle 的贪心解码必然陷入 `" the"` 的 4 字符死循环。
@@ -88,12 +90,14 @@ quantum-llm/
 │   └── viz.py                      # 训练曲线与诊断图绘制
 ├── experiments/
 │   ├── train_llm.py                # 单组/多 seed 受控量子 vs 经典对照脚本
-│   └── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
+│   ├── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
+│   └── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整实验方法学审查与瓶颈诊断报告
+│   ├── REVIEW.md                   # 完整实验方法学审查与瓶颈诊断报告（第 7 节为语料审查）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
+│   ├── corpus_audit.json           # 语料重叠统计归档
 │   └── figures/                    # 实测归档对比图 (lm_diagnosis.png, lm_loss.png 等)
 └── results/                        # 运行产物（gitignore）
 ```

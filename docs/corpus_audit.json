@@ -1,0 +1,47 @@
+{
+  "purpose": "审查 0480629 的留出验证集是否真正「未见」",
+  "train_chars": 1668,
+  "val_chars": 382,
+  "corpus_block_chars": 417,
+  "train_block_repeats": 4.0,
+  "train_unique_4gram_ratio": 0.224,
+  "val_context_covered_by_train": {
+    "4": {
+      "k": 4,
+      "train_unique": 373,
+      "val_unique": 339,
+      "shared": 302,
+      "val_token_coverage": 0.9024
+    },
+    "6": {
+      "k": 6,
+      "train_unique": 409,
+      "val_unique": 369,
+      "shared": 288,
+      "val_token_coverage": 0.7851
+    },
+    "8": {
+      "k": 8,
+      "train_unique": 416,
+      "val_unique": 373,
+      "shared": 247,
+      "val_token_coverage": 0.664
+    },
+    "12": {
+      "k": 12,
+      "train_unique": 417,
+      "val_unique": 371,
+      "shared": 172,
+      "val_token_coverage": 0.4636
+    },
+    "20": {
+      "k": 20,
+      "train_unique": 417,
+      "val_unique": 363,
+      "shared": 102,
+      "val_token_coverage": 0.281
+    }
+  },
+  "train_corpus_entropy_floors_error": "TypeError(\"corpus_entropy_floors() got an unexpected keyword argument 'max_k'\")",
+  "caveat": "n-gram 覆盖率是必要条件而非充分条件：即使上下文见过，模型仍需组合出新的句子级续写；但 k=4 覆盖 90% 以上意味着「留出验证集」无法排除记忆/查表式解法，val PPL 4.29 不能作为量子层带来泛化能力的证据。"
+}
