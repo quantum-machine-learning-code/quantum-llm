@@ -1,4 +1,4 @@
-# 量子 LLM · 玩具级量子增强语言模型
+# 量子 LLM · 玩具级量子增强字符语言模型与方法学诊断
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![PennyLane](https://img.shields.io/badge/PennyLane-0.45-9b59b6)
@@ -6,144 +6,171 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Toy scale](https://img.shields.io/badge/scale-toy%20%2F%20not%20an%20LLM-orange)
 
-> **先把边界说清楚：这不是能对话的大语言模型。** 本仓库把参数化量子电路当作**一个可微分层**嵌进字符级自回归模型，验证「量子层能不能被训练起来」，并与同规模经典层对比 loss / 困惑度 / 耗时。
+> **先把边界说清楚：这不是能对话的大语言模型。** 本仓库把参数化量子电路（VQC）当作**一个可微分变换层**嵌进字符级自回归语言模型，用严格受控的 5 随机种子实验剖析「信息进出量子层的秩瓶颈」与「因果上下文窗口对二元语法熵墙的破局」，并与同结构经典基线和无量子（`Identity`）消融组对比全语料交叉熵、留出验证集泛化困惑度与训练耗时。
 
-当前硬件与模拟器条件下，不存在可行的十亿参数级量子 LLM：状态向量维度是 2ⁿ，每多一个 qubit 内存翻倍。这里做的是**玩具级 QNLP 可行性验证**，词表是字符、语料 1668 字符、序列长 16、4 qubits，生成的是短文本。仓库沿用「量子 LLM」这个名字记录研究方向，不代表它是 LLM。
+当前硬件与状态向量模拟器条件下（态空间维数 $2^n$），不存在可行的十亿参数级量子 LLM。这里做的是**玩具级 QNLP 可行性验证与方法学审查**（词表 31 字符、训练集 1668 字符 + 同词表留出验证集 382 字符、序列长 16、4 qubits）。完整方法学审查报告见 [`docs/REVIEW.md`](docs/REVIEW.md)，姊妹仓库见 [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist)。
 
-姊妹仓库 [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist) 做量子手写数字识别；两个仓库代码各自自包含，可独立 clone 与运行。
+---
 
-## 快速结论（实跑结果）
+## 快速结论（5-Seed 受控实验结果）
 
-Python 3.13 / PennyLane 0.45.1 / torch 2.15 CPU，`seed=0`，单次运行，200 步。复现命令见[快速开始](#快速开始)。
+> **方法学审查要点（详见 [`docs/REVIEW.md`](docs/REVIEW.md)）**：
+> 1. **为什么初版模型（`51e3ad4`）卡在 loss `~2.5` 且必然生成 `A qubit can hold the the the...`？**
+>    初版 `TinyLM` 把 `(B, T, Q)` 直接展平为 `(B*T, Q)` 逐位置独立过变换层，位置 $t$ 之间**无任何跨时间步交互**，`--seq-len 16` 实际退化为 **$k=1$ 无记忆二元语法（Bigram）模型**。在该语料上，任意 $k=1$ 模型的信息论交叉熵下界为 **`1.9701` nats（PPL `7.17`）**，且精确 $k=1$ 查表 Oracle 的贪心解码必然陷入 `" the"` 的 4 字符死循环。
+> 2. **为什么初版报告的 `0.032` nats 差异不可信？**
+>    初版直接取末步单个随机 mini-batch（128 tokens）的瞬时 loss，步间标准差达 `0.11` nats（极差 `0.275` nats），噪声是被测差异的 8 倍；且两组使用了不同 batch 种子（`seed` vs `seed+1`）和未对齐的初始权重。
+> 3. **如何破局？**
+>    将 4-qubit 读出从 4 个 `PauliZ` 扩展至 **48 个正交单比特与两体 Pauli 观测量**（解除 `Linear(4, 31)` 的秩-4 瓶颈），并引入**严格因果上下文编码器（$k=4$ 窗口，`CausalContextEncoder`）**，5-seed 训练集全语料确定性 loss 从 **`2.3864 ± 0.0553`** 降至 **`0.8271 ± 0.0717` nats**（困惑度从 **`10.89`** 降至 **`2.29`**），留出验证集困惑度从 **`10.96`** 降至 **`4.29`**，贪心生成成功走出 `" the"` 死循环。
 
-| 模型 | 参数量 | 最终 loss | 困惑度 | 训练耗时 |
-| --- | --- | --- | --- | --- |
-| 量子层 | 291 | **2.5403** | 12.68 | 5.37 s |
-| 经典层（Linear + Tanh） | 299 | **2.5083** | 12.28 | 0.42 s |
+### 1. 语料信息论条件熵下界 $H(C_{t+1} \mid C_{t-k+1..t})$
 
-**量子层略逊，慢约 13 倍。** 两组数字都不代表模型质量好 —— 200 步只够学到局部字符模式；本实验的产出是「量子层可训练 + 一份公平的对照度量」。完整解读见[怎么读这些数字](#怎么读这些数字)。
+| 上下文阶数 $k$ | 对应模型能力 | 唯一上下文数 | 渐近条件熵 $H$ (nats) | 理论最低 PPL | 窗口 ($T=16$) 下界 | 窗口最低 PPL |
+| --- | --- | --- | --- | --- | --- | --- |
+| $k = -1$ | 均匀盲猜 $\ln V$ | 1 | `3.4340` | `31.00` | `3.4340` | `31.00` |
+| $k = 0$ | 单字符频率（Unigram） | 1 | `2.8493` | `17.28` | `2.8493` | `17.28` |
+| **$k = 1$** | **逐位置模型（`context_mode="token"`）** | **31** | **`1.9701`** | **`7.17`** | **`1.9701`** | **`7.17`** |
+| $k = 2$ | 2 字符因果窗口 | 183 | `0.7938` | `2.21` | `0.8673` | `2.38` |
+| **$k = 4$** | **4 字符因果窗口（`context_mode="causal"`）** | **373** | **`0.1000`** | **`1.11`** | **`0.2680`** | **`1.31`** |
+| $k = 8$ | 8 字符因果窗口 | 416 | `0.0033` | `1.00` | `0.2005` | `1.22` |
+
+### 2. 11 组 × 5 Seeds 受控实验汇总（300 steps, `seeds=[0,1,2,3,4]`）
+
+复现脚本：`python experiments/diagnose_llm.py`，原始数据归档于 [`docs/llm_diagnosis_metrics.json`](docs/llm_diagnosis_metrics.json)。同模式各组共享逐位一致的初始前端与同维度分类头权重（SHA256 校验 5/5 seed 全部通过）及完全一致的 mini-batch 序列：
+
+| 组 ID | 上下文模式 | 变换层与读出规格 | 参数量 | 读出维 | Train Eval Loss (nats) | Train PPL | Held-out Val Loss | Val PPL | 平均耗时 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `tok_q_legacy` | Token ($k=1$) | 4q `PauliZ`，`scale=1.0`（初版基线） | 291 | 4 | `2.3864 ± 0.0553` | `10.89 ± 0.61` | `2.3929 ± 0.0491` | `10.96` | `5.90 s` |
+| `tok_q_scaled` | Token ($k=1$) | 4q `PauliZ` + `tanh*π/2` + `scale=5.0` | 291 | 4 | `2.3370 ± 0.0355` | `10.36 ± 0.36` | `2.3421 ± 0.0353` | `10.41` | `5.93 s` |
+| `tok_identity` | Token ($k=1$) | **无量子恒等消融**（`Identity`） | 279 | 4 | `2.2515 ± 0.0235` | `9.50 ± 0.23` | `2.2629 ± 0.0281` | `9.61` | `0.37 s` |
+| `tok_classical` | Token ($k=1$) | 经典 `Linear(4,4) + Tanh` | 299 | 4 | `2.2893 ± 0.0307` | `9.87 ± 0.30` | `2.2946 ± 0.0347` | `9.93` | `0.46 s` |
+| `tok_q_rich24` | Token ($k=1$) | 4q **24 维读出**（`z+x+y+zzall`） | 911 | 24 | `2.0661 ± 0.0097` | `7.89 ± 0.08` | `2.0780 ± 0.0066` | `7.99` | `16.18 s` |
+| **`tok_q_rich48`** | Token ($k=1$) | 4q **48 维两体读出**（逼近 $k=1$ 下界 `1.97`） | 1655 | 48 | **`2.0631 ± 0.0148`** | **`7.87 ± 0.12`** | **`2.0774 ± 0.0139`** | **`7.98`** | `37.41 s` |
+| `caus_q_z` | Causal ($k=4$) | 4q `PauliZ`（4 维秩瓶颈） | 923 | 4 | `1.9850 ± 0.1262` | `7.33 ± 0.95` | `2.1403 ± 0.1155` | `8.55` | `6.36 s` |
+| `caus_identity` | Causal ($k=4$) | **无量子恒等消融**（`Identity`） | 911 | 4 | `1.6549 ± 0.0573` | `5.24 ± 0.30` | `1.9394 ± 0.0448` | `6.96` | `0.66 s` |
+| `caus_q_reup` | Causal ($k=4$) | **2 层可训练重上传** + 12 维 `z+x+y` | 1191 | 12 | `1.5135 ± 0.1253` | `4.57 ± 0.58` | `1.8598 ± 0.1606` | `6.49` | `14.33 s` |
+| `caus_classical` | Causal ($k=4$) | 经典 `Linear(4,48)+Tanh` + `MLP` 头 | 4867 | 48 | `1.1483 ± 0.0617` | `3.16 ± 0.20` | `1.6266 ± 0.1166` | `5.11` | `0.90 s` |
+| **`caus_q_rich48`** | **Causal ($k=4$)** | **4q 48 维两体读出 + `MLP` 头** | **4639** | **48** | **`0.8271 ± 0.0717`** | **`2.29 ± 0.16`** | **`1.4494 ± 0.1290`** | **`4.29`** | `37.76 s` |
+
+![5-Seed 诊断实验对比图](docs/figures/lm_diagnosis.png)
+
+**关键配对差值（双侧 95% Student-$t$ 置信区间，$n=5$，负值表示前者 Loss 更低）**：
+- **扩宽读出（Token 48 维 vs 4 维）**：`tok_q_rich48 - tok_q_scaled = -0.2738 ± 0.0384` nats，95% CI `[-0.3215, -0.2262]`（**显著**，5/5 seed 为负，逼近 $k=1$ 理论下界 `1.9701`）。
+- **4 维量子读出的负贡献**：`tok_q_scaled - tok_identity = +0.0855 ± 0.0490` nats，95% CI `[+0.0246, +0.1464]`（**显著**，单比特 Z 读出比直接去掉量子层更差）。
+- **因果窗口破壁（$k=4$ vs $k=1$）**：`caus_identity - tok_identity = -0.5966 ± 0.0655` nats，95% CI `[-0.6779, -0.5152]`（**显著**）。
+- **可训练数据重上传（12 维 vs 4 维 Z）**：`caus_q_reup - caus_q_z = -0.4716 ± 0.1061` nats，95% CI `[-0.6033, -0.3398]`（**显著**）。
+- **因果两体量子读出 vs 恒等消融**：`caus_q_rich48 - caus_identity = -0.8279 ± 0.0787` nats，95% CI `[-0.9256, -0.7301]`（**显著**，验证集 `-0.4900 [-0.6986, -0.2814]` 同样显著）。
+- **因果两体量子读出 vs 同结构 4 维瓶颈经典基线**：`caus_q_rich48 - caus_classical` 在训练集上为 **`-0.3212 ± 0.1216`**（95% CI `[-0.4722, -0.1703]`，显著），但在留出验证集上为 `-0.1772`（95% CI `[-0.4019, +0.0475]`，**跨 0 不显著**），且量子模拟耗时慢约 **42 倍**（`37.76s` vs `0.90s`）。
+
+---
 
 ## 能做什么，不能做什么
 
-- **不是 LLM**：字符级词表 31、序列 16、语料 1668 字符，没有注意力机制、没有预训练、不能对话。贪心生成的样本是 `A qubit can hold the the the the ...`。
-- **模拟器的内存墙**：`default.qubit` 状态向量 2ⁿ，4–12 qubits 是笔记本舒适区；把 qubits 推到 20+ 需要 GPU 模拟器，但这也不会让它变成 LLM。
-- **不宣称量子优势**：本仓库的目的是给出可复现的对照实验与度量，不是证明量子更好。
-- **不需要真机凭证**：纯模拟无需 IBM Quantum 等账号。
-- **不需要 MNIST / torchvision / scikit-learn**：语料是内置的自写文本，完全离线。
+- **不是 LLM**：字符级词表 31、序列长 16、内置语料 1668 字符，没有自注意力或大规模预训练，不能对话。
+- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。
+- **模拟器的内存与测量墙**：`default.qubit` 状态向量维度为 $2^n$；解析模式下同时读出 48 个 Pauli 期望无需采样，但真机硬件需按对易组（QWC）拆分并增加 shots 以控制采样方差。
+- **完全离线可复现**：语料与留出验证集均内置，无需真机凭证或联网下载。
+
+---
 
 ## 目录结构
 
 ```
 quantum-llm/
 ├── README.md
-├── LICENSE                     # MIT
+├── LICENSE                         # MIT
 ├── requirements.txt
 ├── qml_lab/
-│   ├── utils.py                # 随机种子、路径、JSON、参数量、终端表格
-│   ├── data.py                 # 内置字符语料、char↔id 词表、可复现 batch 生成器
-│   ├── quantum.py              # PennyLane 设备、QNode、AngleEmbedding + ansatz
-│   ├── models.py               # TinyLM：Embedding -> 可微变换层 -> 词表头
-│   ├── train.py                # 自回归训练循环（loss / ppl / 耗时）
-│   └── viz.py                  # 指标图绘制
-├── experiments/train_llm.py    # 实验入口（含贪心生成）
-├── tests/smoke_test.py         # 离线冒烟测试
-├── docs/DEV_NOTES.md           # 本机环境备注
-├── docs/figures/               # 本次实测对比图（已归档）
-└── results/                    # 运行产物（gitignore）
+│   ├── utils.py                    # 随机种子、路径、JSON、参数量、终端表格
+│   ├── data.py                     # 内置训练/留出验证语料、经验条件熵下界、可复现 batch 生成器
+│   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
+│   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM
+│   ├── train.py                    # 自回归训练循环、全语料确定性评估 (evaluate_lm) 与贪心解码
+│   └── viz.py                      # 训练曲线与诊断图绘制
+├── experiments/
+│   ├── train_llm.py                # 单组/多 seed 受控量子 vs 经典对照脚本
+│   └── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
+├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
+├── docs/
+│   ├── REVIEW.md                   # 完整实验方法学审查与瓶颈诊断报告
+│   ├── DEV_NOTES.md                # 本机环境与复现备注
+│   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
+│   └── figures/                    # 实测归档对比图 (lm_diagnosis.png, lm_loss.png 等)
+└── results/                        # 运行产物（gitignore）
 ```
 
-## 安装
+---
 
-要求 Python 3.11+，纯 CPU 即可运行默认配置，依赖比图像实验少（不需要 torchvision / scikit-learn）。
+## 安装与快速开始
+
+要求 Python 3.11+，纯 CPU 即可运行全部实验：
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-Windows 下把 `.venv/bin/python` 换成 `.venv\Scripts\python.exe`、路径改用反斜杠。
-
-## 快速开始
+### 1. 运行离线契约测试与快速冒烟验证
 
 ```bash
 .venv/bin/python tests/smoke_test.py
 .venv/bin/python experiments/train_llm.py --quick
+.venv/bin/python experiments/diagnose_llm.py --quick
 ```
 
-`--quick` 把 qubits 降到 2、只跑 3 步，用于验证流程跑通，**不用于报告结论**。
+`--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
 
-下面这条正是本 README 实测结果的复现命令：
+### 2. 复现受控基线（`train_llm.py`）与完整 5-Seed 诊断（`diagnose_llm.py`）
 
 ```bash
+# 单组受控对照（支持 --context-mode token|causal 与 --observables）
 .venv/bin/python experiments/train_llm.py \
     --qubits 4 --layers 1 --seq-len 16 --batch-size 8 --steps 200 --seed 0
+
+# 因果窗口 + 48维两体 Pauli 读出受控运行
+.venv/bin/python experiments/train_llm.py \
+    --context-mode causal --observables "z+x+y+zzall+xxall+yyall" \
+    --pre-scale --near-identity-init --scale 5.0 --head mlp --steps 300 --seed 0
+
+# 复现 README 与 docs/REVIEW.md 的全部 11 组 × 5 seeds 诊断实验
+.venv/bin/python experiments/diagnose_llm.py --steps 300 --seeds 0 1 2 3 4 --workers 12
 ```
 
-想换语料用 `--corpus path/to/text.txt`（任意 UTF-8 纯文本，词表自动按字符构建）。全部产物写入 `results/`。
+---
 
-## 实验设计
-
-- **词表**：字符级 `char ↔ id`，基于 `--corpus`（默认内置 1668 字符自写英文语料）构建，实测词表 31。
-- **序列**：固定长度 `seq-len` 的字符窗口，预测下一个字符，loss 为词表交叉熵。batch 生成器用固定 seed 的 `torch.Generator` 保证可复现。
-- **量子层位置**：`Embedding(vocab, qubits)` → 量子层（参数化量子电路）→ `Linear(qubits, vocab)` 输出词表 logits。对照组把中间换成 `Linear + Tanh`，其余结构与超参一致。
-- **量子电路**：`AngleEmbedding(RY)` → `StronglyEntanglingLayers` → 每个 qubit 的 `PauliZ` 期望，输出仍是 `n_qubits` 维实数向量，因此可以直接接线性头。
-- **对比方式**：同一 `steps / lr / batch-size / seed` 下分别训练（各用独立 seed 的 batch 生成器），对比 loss、困惑度（`exp(loss)`，clamp 防溢出）和耗时。
-- **生成样本**：训练后用贪心解码生成 120 个字符写入 `results/lm_sample.txt`，仅用于直观检查是否学到字符分布。
-- **采样与求导**：`--shots 0` 解析模拟（默认）；正整数启用有限采样并自动切 `parameter-shift`。
-
-## 参数速查
-
-> 若与脚本实现不一致，以脚本内 `argparse` 默认值为准。
+## 参数速查（`experiments/train_llm.py`）
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `--qubits` | `4` | qubit 数，也等于 Embedding 输出维 |
+| `--qubits` | `4` | 量子比特数（瓶颈维度） |
 | `--layers` | `1` | `StronglyEntanglingLayers` 层数 |
-| `--seq-len` | `16` | 自回归窗口长度（字符数） |
+| `--context-mode` | `token` | `token`（逐字符 $k=1$）或 `causal`（因果卷积窗口） |
+| `--context-window` | `4` | `causal` 模式下的历史窗口长度 $k$ |
+| `--observables` | `z` | 可观测量规格（如 `z`, `z+x+y`, `z+x+y+zzall`, `z+x+y+zzall+xxall+yyall`） |
+| `--reupload` | `none` | 数据重上传模式：`none` / `fixed` / `trainable` |
+| `--pre-scale` | 关闭 | 是否启用 `tanh(h)*π/2` 入线角度防饱和缩放 |
+| `--scale` | `1.0` | 读出放大倍数（如 `5.0` 或 `learnable`） |
+| `--head` | `linear` | 分类头类型：`linear` 或 `mlp` |
+| `--seq-len` | `16` | 自回归序列窗口长度 |
 | `--batch-size` | `8` | 批大小 |
 | `--steps` | `200` | 训练步数 |
 | `--lr` | `0.01` | 学习率 |
-| `--seed` | `0` | 随机种子 |
-| `--corpus` | 内置示例语料 | 自定义 UTF-8 纯文本语料 |
-| `--diff-method` | `backprop` | PennyLane 求导方式（解析模拟下） |
-| `--shots` | `0` | `0` 解析模拟；正整数为有限采样 |
-| `--out` | `results` | 指标、图片、生成文本的输出目录 |
-| `--quick` | 关闭 | 极小规模验证 |
+| `--seed` / `--seeds` | `0` | 单个或多个随机种子 |
+| `--quick` | 关闭 | 极小规模冒烟验证 |
 
-## 实测结果与复现
+---
 
-配置：内置 1668 字符语料、词表 31、序列长 16、batch 8、200 steps、4 qubits / 1 层。
+## 训练曲线与耗时对比
 
-![量子层与经典层的训练 loss 曲线](docs/figures/lm_loss.png)
+![各模式训练 Loss 曲线](docs/figures/lm_loss.png)
 
-困惑度与耗时对比见 [`docs/figures/lm_perplexity.png`](docs/figures/lm_perplexity.png) 与 [`docs/figures/lm_time.png`](docs/figures/lm_time.png)。
+困惑度收敛曲线与 5-seed 平均训练墙钟耗时见 [`docs/figures/lm_perplexity.png`](docs/figures/lm_perplexity.png) 与 [`docs/figures/lm_time.png`](docs/figures/lm_time.png)。
 
-### 怎么读这些数字
-
-- 量子层**略逊于经典层**，且慢约 13 倍。loss 2.5 左右对应困惑度约 12，两组都只学到很局部的字符模式 —— 这是 200 步、字符级小语料的预期结果，不是模型能力的比较。
-- 量子层慢是因为每个 token 位置都要跑一遍状态向量模拟；参数量（291 vs 299）已经基本对齐，所以差距主要来自计算方式而非容量。
-- 准确的表述是：**在这组配置下，参数化量子电路可以作为可微分层接入自回归语言模型并正常收敛，但训练代价明显更高，且没有带来更好的 loss。**
-- 要更可靠的结论需要：多 `--seed` 重复取均值、更长训练、更丰富的编码与量子层位置、以及把「量子层」与「等 FLOPs 的经典层」对齐。
-
-### 运行产物
-
-`results/` 被 `.gitignore` 忽略，以下均为运行后本地生成；`docs/figures/` 归档了本次实测的对比图。
-
-| 文件 | 内容 |
-| --- | --- |
-| `results/lm_metrics.json` | 两组 loss / 困惑度 / 耗时、`config`、`vocab_size`、`caveat` |
-| `results/lm_loss.png` / `lm_perplexity.png` / `lm_time.png` | loss 曲线、困惑度曲线、耗时对比 |
-| `results/lm_sample.txt` | 贪心解码生成的样本文本 |
-
-## 技术栈与下一步
-
-**PennyLane**（可微分量子电路）+ **PyTorch**（混合训练），辅以 NumPy / Matplotlib；默认 `default.qubit` 状态向量模拟。
-
-下一步：多 seed 重复与统计检验、等计算预算的经典对照、量子层放在不同位置（替代 attention 的一个头 / 门控）、amplitude encoding 与数据重上传、噪声模型与有限 `--shots`、更大的 qubits 与 Lightning GPU 后端。
+---
 
 ## 相关仓库与许可
 
-- 姊妹仓库：[quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist) · 量子手写数字识别
+- 方法学审查报告：[`docs/REVIEW.md`](docs/REVIEW.md)
+- 姊妹仓库：[quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist) · 量子手写数字识别与读出瓶颈分析
 - 组织主页：[quantum-machine-learning-code](https://github.com/quantum-machine-learning-code)
 
 本项目采用 [MIT License](LICENSE)。

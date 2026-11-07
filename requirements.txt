@@ -2,7 +2,9 @@
 pennylane>=0.40,<0.50
 torch>=2.4
 numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.3
 matplotlib>=3.8
-tqdm>=4.66
 
-# No torchvision / scikit-learn needed here: the corpus is built in and offline.
+# No torchvision needed here: the character corpus is built in and offline.
+# scipy and scikit-learn are used for multi-seed Student-t CIs and readout probes.
