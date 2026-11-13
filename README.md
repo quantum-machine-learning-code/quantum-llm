@@ -47,7 +47,10 @@ $p\approx0$），确认学到的是**组合泛化**而非记忆；但准确率�
 **三个必须说清的前提**：① 随机 embedding 下扫过 3 个学习率、跑到
 25.5 epochs，两臂都卡在随机基线，因此给数字 token 加了**两臂共享的循环
 角度编码** $[\sin(2\pi n/112),\cos(2\pi n/112),\sin(4\pi n/112),\cos(4\pi n/112)]$
-作为经典先验 —— 这是让任务可学的必要设计，**不是量子优势**；
+作为经典先验 —— 它对**本仓库这个架构**是让任务可学的必要设计，**不是量子优势**；
+第 12 节的长训练扫描证明：换一个已知能 grok 的二次 MLP，从同样的随机
+embedding 出发、同样零重叠切分，很快就能到 >99%，所以「任务本身学不动」
+是错的，瓶颈在架构；
 ② 该编码只是**初始化，不是冻结**：`nn.Embedding` 默认 `requires_grad=True`，
 Adam 每步都在更新它（第 11 节三方消融实测训练前后 RMS 漂移）；
 ③ 两臂始终同配置、**都没有各自调参**（统一 `lr=0.015`）。
@@ -82,8 +85,43 @@ Adam 每步都在更新它（第 11 节三方消融实测训练前后 RMS 漂移
 `--quick` 冒烟、`--probe` 1-seed 探针、`--probe --no-circular-embedding`
 消融、`--redraw-from docs/addition_metrics.json` 只重画图；
 `python experiments/embedding_ablation.py` 复现三方消融。
-完整归因与边界见 [REVIEW.md 第 10–11 节](docs/REVIEW.md)、
+完整归因与边界见 [REVIEW.md 第 10–12 节](docs/REVIEW.md)、
 [指标归档](docs/addition_metrics.json)。
+
+**这是不是 grokking？—— 长训练扫描（[REVIEW.md 第 12 节](docs/REVIEW.md)、
+[归档](docs/grokking_metrics.json)、[pilot](docs/grokking_pilot.json)、
+[图](docs/figures/grokking_scan.png)）**：按 `(a,b)` 组合留出 + 随机可训练
+embedding 确实是 Power et al. (2022) 的 grokking 原始设置；我们那个循环角度
+编码恰好是 Nanda et al. (2023) 发现模型**最终自己学会**的傅里叶表征，
+等于把终点当起点手工塞了进去。本轮核实文献并实跑三段式扫描：
+1-seed pilot（19 条件 × 20000 步）→ 5-seed 确认（40000 步）→ 量子臂
+有限预算示意，另加一个已知可 grok 的二次 MLP **正对照**与傅里叶
+progress measure。
+
+![grokking 长训练扫描：pilot 网格、5-seed 曲线、相变与成本](docs/figures/grokking_scan.png)
+
+| 5-seed 确认 | 步数 | val acc | grokking seeds |
+| --- | --- | --- | --- |
+| `RichQuantumLM` 随机 embedding + AdamW `wd=0.1` | 40000 | `0.0255 ± 0.0411` | **0/5** |
+| `frozen`（循环编码冻结） | 40000 | `0.4207 ± 0.0292` | 0/5 |
+| `trainable_circular`（默认） | 40000 | `0.2736 ± 0.1129` | 0/5 |
+| 二次 MLP 正对照（20% 训练数据 + `wd=1.0`） | 5000 | **`0.9944 ± 0.0006`** | **5/5** |
+| 二次 MLP 正对照（同 0.2 切分） | 5000 | `0.9983 ± 0.0002` | 0/5 |
+
+**结论**：grokking 复现了，但**不在本仓库模型里**。正对照在 1000 步完成记忆
+（train 1.00）、1500 步突发泛化（val 0.99，单步跳变 `+0.667`）；同一任务、
+同一随机 embedding、同一零重叠切分下，把本仓库预算拉到 20 倍并加 weight
+decay 仍 0/5 出现相变。**同切分架构差距 `+0.9910` CI `[+0.9877,+0.9943]`，
+3 个主检验 Holm 后唯一显著项**。所以「再训练久一点就会 grok」不成立，
+瓶颈是**架构缺少乘法交互 / 傅里叶表示能力**，不是训练预算或梯度摊薄。
+另外：冻结在 40000 步后仍未反转（`0.4207` vs `0.2736`，`p=0.041` 但 Holm
+后 `p=0.082` 不显著），而前 4 维 sin/cos 相位保持度恒 `1.000` vs 降到
+`0.614`、与准确率相关（探索性 `r=0.69`），解释了第 11 节的机制。
+量子臂实测 `0.1264 s/步` vs 经典 `0.0038 s/步`（**33.6×**），
+$10^5$ 步需 `3.5 h` vs `0.1 h`；本轮量子只跑 2500 步（2.5%），仅作成本示意。
+**边界**：pilot 是 1-seed 探索且存在选择偏差；相变条件用了 80% 留出的
+切分，干净架构比较用的是同切分那一组；这里的相变在 500~1500 步发生，
+比 transformer 文献快几个数量级，只能说现象同类。
 
 ---
 
@@ -236,10 +274,11 @@ quantum-llm/
 │   ├── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
 │   ├── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
 │   ├── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
-│   └── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
+│   ├── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
+│   └── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7–11 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7–12 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融 / grokking）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
@@ -247,7 +286,9 @@ quantum-llm/
 │   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
 │   ├── addition_metrics.json       # 课题一：模 112 加法 5-seed 受控对照归档
 │   ├── embedding_ablation_metrics.json # 课题一补：三模式 embedding 对照归档
-│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, ...)
+│   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
+│   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
+│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, grokking_scan.png, ...)
 └── results/                        # 运行产物（gitignore）
 ```
 
@@ -281,6 +322,18 @@ python3 -m venv .venv
 .venv/bin/python experiments/embedding_ablation.py --quick              # 三模式聚合冒烟
 .venv/bin/python experiments/embedding_ablation.py                      # 三模式 x 5 seed 正式消融
 ```
+
+### 1c. 复现 grokking 长训练扫描
+
+```bash
+.venv/bin/python experiments/grokking_scan.py --quick                    # 全链路冒烟
+.venv/bin/python experiments/grokking_scan.py --pilot-only               # 只跑 1-seed 超参 pilot（探索性）
+.venv/bin/python experiments/grokking_scan.py --pilot-from docs/grokking_pilot.json  # 复用 pilot，跑 5-seed 确认
+.venv/bin/python experiments/grokking_scan.py --redraw-from docs/grokking_metrics.json  # 只重画图
+```
+
+长训练默认 `workers=6`、经典臂 40000 步；本机内存紧张时把 `--workers` 调小，
+并显式设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
 
 `--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
 

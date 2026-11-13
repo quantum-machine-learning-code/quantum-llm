@@ -426,6 +426,67 @@ def check_embedding_modes() -> None:
         )
 
 
+def check_grokking_scan() -> None:
+    """第 12 节契约：正对照可解任务、progress measure 能区分有无循环结构、
+    相变判定对「先记忆后突发泛化」敏感，且长训练脚本 --quick 可跑通。
+    """
+    exp_dir = str(ROOT / "experiments")
+    if exp_dir not in sys.path:
+        sys.path.insert(0, exp_dir)
+    from grokking_scan import (
+        QuadraticMLP, TARGET_K1, TARGET_K12, _phase_detect, _r2_decode,
+    )
+
+    table = enumerate_table("+")
+    tr, _ = split_table(table, "holdout_pairs", 0.2, 0)
+    x, y = build_tensors(tr)
+
+    # 正对照接口必须与 RichQuantumLM 一致，才能复用 answer_logits / evaluate_answers
+    ctrl = QuadraticMLP(hidden=32)
+    assert tuple(answer_logits(ctrl, x[:8]).shape) == (8, MODULUS)
+    ev = evaluate_answers(ctrl, x[:8], y[:8])
+    assert np.isfinite(ev["answer_loss"])
+    assert ctrl.embed.weight.requires_grad
+
+    # Fourier progress measure：循环编码应近乎完全可解码，随机 embedding 不应
+    rich = RichQuantumLM(vocab_size=VOCAB_SIZE, n_qubits=4, n_layers=1,
+                         context_mode="causal", context_window=4,
+                         transform_type="classical", head="mlp", hidden=48)
+    rng = torch.Generator().manual_seed(7)
+    random_w = torch.randn(112, 16, generator=rng).numpy()
+    assert _r2_decode(random_w, TARGET_K1) < 0.5
+    circular_init(rich)
+    circ_w = rich.embed.weight.detach().numpy()[:112]
+    assert _r2_decode(circ_w, TARGET_K1) > 0.95
+    assert _r2_decode(circ_w[:, :4], TARGET_K12) > 0.95, "前 4 维必须保留 sin/cos 相位"
+    assert _r2_decode(circ_w[:, :4] * 0.0 + torch.randn(112, 4).numpy(),
+                      TARGET_K12) < 0.5
+
+    # 相变判定：平滑同步上升不算 grokking；先记忆后突发才算
+    smooth = [{"step": s, "train_acc": s / 10, "val_acc": s / 10,
+               "train_loss": 1.0, "val_loss": 1.0} for s in range(1, 11)]
+    assert _phase_detect(smooth)["grokking_observed"] is False
+    delay = [
+        {"step": 1, "train_acc": 0.10, "val_acc": 0.01,
+         "train_loss": 1.0, "val_loss": 1.0},
+        {"step": 2, "train_acc": 0.98, "val_acc": 0.01,
+         "train_loss": 1.0, "val_loss": 1.0},
+        {"step": 3, "train_acc": 1.00, "val_acc": 0.05,
+         "train_loss": 1.0, "val_loss": 1.0},
+        {"step": 4, "train_acc": 1.00, "val_acc": 0.95,
+         "train_loss": 1.0, "val_loss": 1.0},
+    ]
+    ph = _phase_detect(delay)
+    assert ph["delayed_generalization"] and ph["abrupt_generalization"]
+    assert ph["grokking_observed"] and ph["delay_steps"] == 2
+
+    cmd = [sys.executable, str(ROOT / "experiments" / "grokking_scan.py"), "--quick"]
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, (
+        f"grokking_scan.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+    )
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通。"""
     cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
@@ -439,6 +500,7 @@ def main() -> None:
     check_synthetic_corpus()
     check_arithmetic_task()
     check_embedding_modes()
+    check_grokking_scan()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()
