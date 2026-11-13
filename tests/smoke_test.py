@@ -23,6 +23,23 @@ from qml_lab.data import (
     load_independent_split,
     load_synthetic_split,
 )
+from qml_lab.arithmetic import (
+    BOUNDARY_EXAMPLES,
+    MODULUS,
+    RANDOM_BASELINE_ACCURACY,
+    VOCAB_SIZE,
+    answer_logits,
+    apply_op,
+    build_tensors,
+    build_vocab,
+    circular_init,
+    context_overlap,
+    decode_expression,
+    encode_expression,
+    enumerate_table,
+    evaluate_answers,
+    split_table,
+)
 from qml_lab.corpus_independent import assert_disjoint, word_bigram_novelty
 from qml_lab.models import RichQuantumLM, TinyLM
 from qml_lab.quantum import make_rich_layer, make_vqc_layer, n_readout
@@ -275,6 +292,73 @@ def check_synthetic_corpus() -> None:
     assert nov["novel_ratio"] > 0.95
 
 
+def check_arithmetic_task() -> None:
+    """课题一契约：117 词表、模 112 边界样例、零重叠切分、循环编码受控。
+
+    防止以后把词表改成字符级数字、把切分改回有重叠，或让两臂共享的
+    循环编码悄悄退化成不一致的随机初始化。
+    """
+    stoi, _, size = build_vocab()
+    assert size == VOCAB_SIZE == 117
+    assert stoi["0"] == 0 and stoi["111"] == 111
+    assert stoi["+"] == 112 and stoi["/"] == 115 and stoi["="] == 116
+
+    for a, op, b, c in BOUNDARY_EXAMPLES:
+        ids = encode_expression(a, b, op, c)
+        assert len(ids) == 5 and ids[-1] == c
+        assert decode_expression(ids) == f"{a}{op}{b}={c}"
+        assert apply_op(a, b, op) == c
+
+    table = enumerate_table("+")
+    assert len(table) == MODULUS ** 2 == 12544
+    for op in ("+", "-", "*"):
+        assert len(enumerate_table(op)) == 12544, f"{op} 未在 Z_112 上封闭"
+    # 只有与 112 互质的除数有模逆：phi(112) = 48
+    assert len(enumerate_table("/")) == 48 * MODULUS
+
+    tr, va = split_table(table, "holdout_pairs", 0.2, 0)
+    ov = context_overlap(tr, va, "holdout_pairs")
+    assert ov["pair_level_disjoint"] and ov["pair_intersection"] == 0
+    assert ov["full_context_coverage_k4"] == 0.0, "验证集输入四元组必须全部未见"
+    assert ov["coverage_by_k"]["k1"] == 1.0, "数字 token 应都见过（组合泛化而非数值外推）"
+    tr2, va2 = split_table(table, "holdout_operand", 0.2, 0)
+    assert context_overlap(tr2, va2, "holdout_operand")[
+        "val_first_operand_novel_ratio"
+    ] == 1.0
+
+    x, y = build_tensors(tr)
+    assert tuple(x.shape) == (len(tr), 4) and int(y.max()) < MODULUS
+    assert abs(RANDOM_BASELINE_ACCURACY - 1.0 / MODULUS) < 1e-12
+
+    specs = (
+        dict(transform_type="quantum", observables="z+x+y+zzall+xxall+yyall", scale=5.0),
+        dict(transform_type="classical", observables="z+x+y+zzall+xxall+yyall", scale=1.0),
+    )
+    embeddings = []
+    for spec in specs:
+        set_seed(0)
+        model = RichQuantumLM(
+            vocab_size=VOCAB_SIZE, n_qubits=4, n_layers=1,
+            context_mode="causal", context_window=4,
+            head="mlp", hidden=48, pre_scale=True, **spec,
+        )
+        circular_init(model)
+        embeddings.append(model.embed.weight.detach().clone())
+        e = model.embed.weight.detach()
+        assert abs(float(e[0, 1]) - 1.0) < 1e-6
+        assert abs(float(e[28, 0]) - 1.0) < 1e-6
+        assert float(e[112, 4]) == 1.0
+        assert tuple(answer_logits(model, x[:8]).shape) == (8, MODULUS)
+        ev = evaluate_answers(model, x[:8], y[:8])
+        assert 0.0 <= ev["answer_accuracy"] <= 1.0
+        assert np.isfinite(ev["answer_loss"])
+    assert torch.equal(embeddings[0], embeddings[1]), "循环编码后两臂 embed 不一致"
+
+    cmd = [sys.executable, str(ROOT / "experiments" / "train_addition.py"), "--quick"]
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, f"train_addition.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通。"""
     cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
@@ -286,6 +370,7 @@ def main() -> None:
     check_data_and_entropy()
     check_independent_corpus()
     check_synthetic_corpus()
+    check_arithmetic_task()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()

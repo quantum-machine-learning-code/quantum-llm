@@ -1,4 +1,4 @@
-# 量子 LLM · 玩具级量子增强字符语言模型与方法学诊断
+# 量子 LLM · 课题一：模 112 加法；课题二：玩具级字符语言模型与方法学诊断
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![PennyLane](https://img.shields.io/badge/PennyLane-0.45-9b59b6)
@@ -9,10 +9,56 @@
 > **先把边界说清楚：这不是能对话的大语言模型。** 本仓库把参数化量子电路（VQC）当作**一个可微分变换层**嵌进字符级自回归语言模型，用严格受控的 5 随机种子实验剖析「信息进出量子层的秩瓶颈」与「因果上下文窗口对二元语法熵墙的破局」，并与同结构经典基线和无量子（`Identity`）消融组对比全语料交叉熵、留出验证集困惑度与训练耗时（该验证集与训练集高度重叠，见下方语料审查）。
 
 当前硬件与状态向量模拟器条件下（态空间维数 $2^n$），不存在可行的十亿参数级量子 LLM。这里做的是**玩具级 QNLP 可行性验证与方法学审查**（词表 31 字符、训练集 1668 字符（同一段 417 字符重复 4 遍）+ 同词表留出验证集 382 字符（k=4 上下文 90.2% 训练时已见过）、序列长 16、4 qubits）。完整方法学审查报告见 [`docs/REVIEW.md`](docs/REVIEW.md)，姊妹仓库见 [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist)。
+> **课题划分（2026-11-13）**：第一个课题改为**可穷举、零重叠的模 112 加法**（见下一节），上述字符级语言模型保留为课题二；两者共用同一套量子层/经典层受控对照框架。
+---
+
+## 课题一：模 112 加法（$\mathbb{Z}_{112}$，2026-11-13）
+
+> **第一个课题定位为计算 $n+m$**：数值域 0~111，加法在模 112 意义下封闭，
+> `111+1=0`（回绕）、`0+0=0`（加法恒等元）。词表 **117 = 112 个数字 token
+> + `+ - * /` 四个运算符 + `=` 一个等号**；本轮只生成加法样本，其余运算符
+> 占词表位留给后续课题（`/` 在 $\mathbb{Z}_{112}$ 非域上不总有唯一解）。
+
+| 等式 | token 序列 |
+| --- | --- |
+| `111+1=0` | `[111, 112, 1, 116, 0]` |
+| `0+0=0` | `[0, 112, 0, 116, 0]` |
+
+模型只看 `[a][+][b][=]` 四个 token（恰为 `context_window=4`），在答案位预测
+`c` —— **112 类单 token 分类**，随机基线 $1/112 = 0.0089$。全空间
+$112\times112=12544$ 个有序对按 `(a,b)` 组合严格 disjoint 切分：训练
+10035 / 验证 2509，**验证集 k=4 上下文在训练集的覆盖率为 0.0%**
+（历史语料 90.2% → 独立语料 38.7% → 此处 0%），是真正的未见组合泛化检验。
+
+![模 112 加法：训练曲线与最终准确率](docs/figures/addition_accuracy.png)
+
+| 组 | train acc | 未见组合 val acc | val loss | 耗时 / seed |
+| --- | --- | --- | --- | --- |
+| `add_q_rich48`（量子） | `0.1924` | **`0.1817 ± 0.0423`** | `2.2880` | `440.6 s` |
+| `add_classical`（同结构经典层 = 量子层消融） | `0.1496` | `0.1365 ± 0.0410` | `2.6587` | `17.5 s` |
+
+5 seed × 2000 步，两臂答案位准确率都显著高于随机基线（二项检验
+$p\approx0$），确认学到的是**组合泛化**而非记忆；但准确率仅 18% / 14%、
+曲线仍在上升，**任务远未解决**。**3 个预先指定的主检验 Holm 校正后
+0 个显著**：val 准确率配对 `+0.0451`、95% CI `[-0.0003, +0.0905]` 跨 0
+—— 量子臂数值更高，但**量子层无可证实的正贡献**。`val_loss` 差值
+`−0.3707` 虽在 Bonferroni 后显著，但 loss 不是主指标，不能据此宣称分类更强。
+
+**两个必须说清的前提**：① 随机 embedding 下扫过 3 个学习率、跑到
+25.5 epochs，两臂都卡在随机基线，因此给数字 token 加了**两臂共享的循环
+角度编码** $[\sin(2\pi n/112),\cos(2\pi n/112),\sin(4\pi n/112),\cos(4\pi n/112)]$
+作为经典先验 —— 这是让任务可学的必要设计，**不是量子优势**；
+② 两臂始终同配置、**都没有各自调参**（统一 `lr=0.015`）。
+
+复现：`python experiments/train_addition.py`（约 13 分钟）；
+`--quick` 冒烟、`--probe` 1-seed 探针、`--probe --no-circular-embedding`
+消融、`--redraw-from docs/addition_metrics.json` 只重画图。
+完整归因与边界见 [REVIEW.md 第 10 节](docs/REVIEW.md)、
+[指标归档](docs/addition_metrics.json)。
 
 ---
 
-## 快速结论（5-Seed 受控实验结果）
+## 课题二：字符语言模型 · 快速结论（5-Seed 受控实验结果）
 
 > **⚠ 2026-11-07 语料审查（[REVIEW.md 第 7 节](docs/REVIEW.md)，[`audit_corpus.py`](experiments/audit_corpus.py)）**：训练集 1668 字符是同一段 417 字符文本**重复 4 遍**（unique 4-gram 仅 22.4%）；所谓「独立未见句验证集」在模型实际使用的因果上下文长度 `k=4` 上，有 **90.2%** 的 token 上下文在训练集中出现过。因此 `val PPL 4.29` 只能读作**同分布重组句的迁移**，不是未见分布泛化，也不能作为量子层带来泛化能力的证据。原始统计见 [`docs/corpus_audit.json`](docs/corpus_audit.json)。
 >
@@ -72,7 +118,7 @@
 
 ---
 
-## 独立语料重跑（2026-11-13，5 seeds）
+## 课题二 · 独立语料重跑（2026-11-13，5 seeds）
 
 第 7 节指出旧留出集不足以支撑泛化结论；本节是补齐后的结果。复现：
 `python experiments/independent_corpus.py`（约 2 分钟，`--quick` 为冒烟）。
@@ -102,7 +148,7 @@
 
 ---
 
-## 稳健性复核（2026-11-13，20 seeds × 1200 步 + 极端语料）
+## 课题二 · 稳健性复核（2026-11-13，20 seeds × 1200 步 + 极端语料）
 
 第 8 节的 `n=5 / 300 步` 结论可能只是欠拟合假象或单一语料偶然。复现：
 `python experiments/robustness_check.py`（默认 8 workers；`--quick` 为冒烟）。
@@ -148,6 +194,7 @@ quantum-llm/
 ├── qml_lab/
 │   ├── utils.py                    # 随机种子、路径、JSON、参数量、终端表格
 │   ├── data.py                     # 内置训练/留出验证语料、经验条件熵下界、可复现 batch 生成器
+│   ├── arithmetic.py               # 课题一：117-token 词表、Z_112 运算、穷举/disjoint 切分、答案位评估与循环编码
 │   ├── corpus_independent.py       # 两份语料 (independent / synthetic) + 重叠率与分布散度工具
 │   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
 │   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM
@@ -158,16 +205,18 @@ quantum-llm/
 │   ├── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
 │   ├── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
 │   ├── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
-│   └── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
+│   ├── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
+│   └── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7–9 节：语料审查 / 独立重跑 / 稳健性复核）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7–10 节：语料 / 独立重跑 / 稳健性 / 模 112 加法）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
 │   ├── independent_corpus_metrics.json # 独立语料 5-seed 重跑归档
 │   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
-│   └── figures/                    # 实测对比图 (lm_diagnosis.png, independent_corpus.png, robustness_check.png)
+│   ├── addition_metrics.json       # 课题一：模 112 加法 5-seed 受控对照归档
+│   └── figures/                    # 实测对比图 (addition_accuracy.png, independent_corpus.png, robustness_check.png)
 └── results/                        # 运行产物（gitignore）
 ```
 
@@ -188,6 +237,15 @@ python3 -m venv .venv
 .venv/bin/python tests/smoke_test.py
 .venv/bin/python experiments/train_llm.py --quick
 .venv/bin/python experiments/diagnose_llm.py --quick
+.venv/bin/python experiments/train_addition.py --quick
+```
+
+### 1b. 复现课题一（模 112 加法）
+
+```bash
+.venv/bin/python experiments/train_addition.py                          # 5 seed x 2000 步，约 13 分钟
+.venv/bin/python experiments/train_addition.py --probe                  # 1 seed x 1000 步容量探针
+.venv/bin/python experiments/train_addition.py --probe --no-circular-embedding  # 循环编码消融
 ```
 
 `--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
