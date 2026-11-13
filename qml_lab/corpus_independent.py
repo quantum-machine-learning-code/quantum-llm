@@ -1,36 +1,51 @@
-"""独立语料（2026-11-13）：句级 disjoint、主题分离的字符级训练 / 验证集。
+"""独立语料（2026-11-13）：句级 disjoint 的字符级训练 / 验证集，提供两份口径。
 
 动机见 ``docs/REVIEW.md`` 第 7 节：旧 ``_HELDOUT_VAL_CORPUS`` 虽是重新组合的新句，
 但在模型实际使用的因果窗口 k=4 上，验证集 90.2% 的上下文在训练集中出现过，
 ``val PPL 4.29`` 只能读作同分布重组句迁移，不能作为泛化证据。
 
-本模块给出：
+本模块给出两份语料：
 
-* ``INDEPENDENT_TRAIN_SENTENCES``：44 句自写英文，主题为量子线路 / 线性代数 /
-  优化与测量，句子互不重复，训练文本由它们各出现一次拼接而成（不复读整段）。
-* ``INDEPENDENT_VAL_SENTENCES``：14 句自写英文，主题换成航海 / 烘焙 / 地质 /
-  天气 / 园艺，实词与训练语料不重合，且句子级严格 disjoint。
-* 只用小写字母、空格、句点与逗号，保证验证集字符不超出训练集词表（零 UNK）。
+A. ``independent``（默认，REVIEW 第 8 节）
+   44 句自写英文训练 / 14 句主题分离验证（量子线路 / 线代 / 优化 vs 航海 / 烘焙 /
+   地质 / 天气 / 园艺），句级 disjoint、零 UNK；k=4 覆盖率 38.7%，字符 unigram
+   JS 散度 0.0094。用于把「同分布重组」升级为「主题外新句迁移」。
+
+B. ``synthetic``（REVIEW 第 9 节）
+   固定 seed 生成的**受控合成伪词**，专门用于分布偏移压力测试：训练/验证音节集合
+   严格不相交，验证集只用常见辅音而训练集偏向生僻辅音，因而 k=4 覆盖率降到
+   0.24%、字符 unigram JS 散度升到 0.2538（约为 A 的 27 倍）；验证集字符仍全部
+   落在训练集词表内（零 UNK）。它不是自然语言，只用于检验第 8 节的
+   「量子层泛化间隙更大」结论是否依赖某一特定语料。
 
 诚实边界：字符级英文文本**不可能**做到完全零共享 4-gram（``" the "``、``"and "``
-等功能片段必然重合）。因此本模块报告逐 k 覆盖率与「验证集新 4-gram 比例」，
-并把它当作相对于旧语料 90.2% 的**显著改善**，而不宣称「完全独立分布」。
+等功能片段必然重合）；A 只把 k=4 覆盖率相对旧语料显著压低。B 是人工伪词，
+分布偏移远大于自然文本，结论只能读作「在极端字符分布偏移下两臂的相对表现」，
+不能外推为自然语言泛化能力。两份语料都报告逐 k 覆盖率与分布散度，
+不宣称「完全独立分布」。
 
 用法：
-    from qml_lab.corpus_independent import load_independent_split, corpus_overlap
-    train, val = load_independent_split()
+    from qml_lab.corpus_independent import load_split, corpus_overlap
+    train, val = load_split("independent")     # 或 "synthetic"
     report = corpus_overlap(train, val)
 """
 from __future__ import annotations
 
 from collections import Counter
+import math
+import random
 
 __all__ = [
     "INDEPENDENT_TRAIN_SENTENCES",
     "INDEPENDENT_VAL_SENTENCES",
+    "SYNTHETIC_TRAIN_SENTENCES",
+    "SYNTHETIC_VAL_SENTENCES",
     "load_independent_split",
+    "load_synthetic_split",
+    "load_split",
     "ngrams",
     "corpus_overlap",
+    "char_distribution_divergence",
     "assert_disjoint",
 ]
 
@@ -98,20 +113,75 @@ INDEPENDENT_VAL_SENTENCES: tuple[str, ...] = (
     "harvest baskets waited in a row by the gate of the sleepy village.",
 )
 
+# ---------------------------------------------------------------------------
+# 语料 B：受控合成伪词（分布偏移压力测试，REVIEW 第 9 节）
+# ---------------------------------------------------------------------------
+# 音节都是 CV 结构。训练集音节 = 生僻辅音×全部元音 + 常见辅音×'a'（后者只为
+# 覆盖全部 21 个辅音，保证验证集零 UNK）；验证集音节 = 常见辅音×(e,i,o,u)，
+# 与训练集音节集合严格不相交。因此验证集字符 ⊆ 训练集字符，但 4-gram 几乎全新。
+_SYNTH_SEED = 20261113
+_VOWELS = "aeiou"
+_C_RARE = "zqxjkwvbgpcfy"          # 13 个：生僻辅音 + 剩余辅音
+_C_COMMON = "tnshrldm"             # 8 个常见辅音
+_TRAIN_SYLLABLES: tuple[str, ...] = tuple(sorted(
+    {c + v for c in _C_RARE for v in _VOWELS} | {c + "a" for c in _C_COMMON}
+))
+_VAL_SYLLABLES: tuple[str, ...] = tuple(sorted(
+    {c + v for c in _C_COMMON for v in "eiou"}
+))
 
-def load_independent_split() -> tuple[str, str]:
+
+def _make_synthetic_sentences(pool: tuple[str, ...], count: int, salt: int,
+                              words_per_sentence: tuple[int, int] = (9, 12)) -> tuple[str, ...]:
+    """固定 seed 生成伪词句子；每个词由 2–3 个音节拼成，句末句点。"""
+    r = random.Random(_SYNTH_SEED + salt)
+    out: list[str] = []
+    for _ in range(count):
+        n_words = r.randint(*words_per_sentence)
+        words = [
+            "".join(r.choice(pool) for _ in range(r.choice((2, 2, 3))))
+            for _ in range(n_words)
+        ]
+        out.append(" ".join(words) + ".")
+    return tuple(out)
+
+
+SYNTHETIC_TRAIN_SENTENCES = _make_synthetic_sentences(_TRAIN_SYLLABLES, 44, 1)
+SYNTHETIC_VAL_SENTENCES = _make_synthetic_sentences(_VAL_SYLLABLES, 14, 2)
+
+_CORPUS_REGISTRY: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "independent": (INDEPENDENT_TRAIN_SENTENCES, INDEPENDENT_VAL_SENTENCES),
+    "synthetic": (SYNTHETIC_TRAIN_SENTENCES, SYNTHETIC_VAL_SENTENCES),
+}
+
+
+def load_split(which: str = "independent") -> tuple[str, str]:
     """返回 (train_text, val_text)；两者由互不重叠的完整句子拼接而成。"""
-    train = " ".join(INDEPENDENT_TRAIN_SENTENCES)
-    val = " ".join(INDEPENDENT_VAL_SENTENCES)
-    assert_disjoint(train, val)
+    if which not in _CORPUS_REGISTRY:
+        raise ValueError(f"未知语料 {which!r}，可选 {sorted(_CORPUS_REGISTRY)}")
+    train_s, val_s = _CORPUS_REGISTRY[which]
+    train, val = " ".join(train_s), " ".join(val_s)
+    assert_disjoint(train, val, train_sentences=train_s, val_sentences=val_s)
     return train, val
 
 
-def assert_disjoint(train: str, val: str) -> None:
+def load_independent_split() -> tuple[str, str]:
+    """语料 A（自写英文、主题分离），REVIEW 第 8 节。"""
+    return load_split("independent")
+
+
+def load_synthetic_split() -> tuple[str, str]:
+    """语料 B（受控合成伪词、极端分布偏移），REVIEW 第 9 节。"""
+    return load_split("synthetic")
+
+
+def assert_disjoint(train: str, val: str, *,
+                    train_sentences: tuple[str, ...] | None = None,
+                    val_sentences: tuple[str, ...] | None = None) -> None:
     """断言：句级 disjoint、验证集无训练集之外的字符、验证集确有新 4-gram。"""
-    train_sentences = set(INDEPENDENT_TRAIN_SENTENCES)
-    val_sentences = set(INDEPENDENT_VAL_SENTENCES)
-    overlap = train_sentences & val_sentences
+    tr_s = train_sentences if train_sentences is not None else INDEPENDENT_TRAIN_SENTENCES
+    va_s = val_sentences if val_sentences is not None else INDEPENDENT_VAL_SENTENCES
+    overlap = set(tr_s) & set(va_s)
     if overlap:
         raise AssertionError(f"训练/验证集出现重复句子: {sorted(overlap)[:3]}")
     extra = set(val) - set(train)
@@ -129,18 +199,51 @@ def ngrams(text: str, k: int) -> list[str]:
     return [text[i:i + k] for i in range(len(text) - k + 1)]
 
 
-def corpus_overlap(train: str, val: str, ks: tuple[int, ...] = (4, 6, 8, 12, 20)) -> dict:
+def char_distribution_divergence(train: str, val: str) -> dict:
+    """量化训练/验证集的字符 unigram 分布差异（JS 散度等）。
+
+    JS 用两分布的混合作为参照，天然支持「验证集出现训练集没有的字符」的情形；
+    该情形同时由 ``val_chars_outside_train`` 显式报告（应为空，否则会产生 UNK）。
+    """
+    ct, cv = Counter(train), Counter(val)
+    pt = {k: v / len(train) for k, v in ct.items()}
+    pv = {k: v / len(val) for k, v in cv.items()}
+    keys = set(pt) | set(pv)
+    mix = {k: (pt.get(k, 0.0) + pv.get(k, 0.0)) / 2 for k in keys}
+
+    def kl(a: dict[str, float], b: dict[str, float]) -> float:
+        return sum(a[k] * math.log(a[k] / b[k])
+                   for k in keys if a.get(k, 0.0) > 0 and b.get(k, 0.0) > 0)
+
+    kl_vt = kl(pv, pt) if all(pt.get(k, 0.0) > 0 for k in pv) else None
+    return {
+        "js_unigram": round(0.5 * kl(pt, mix) + 0.5 * kl(pv, mix), 6),
+        "kl_val_train": round(kl_vt, 6) if kl_vt is not None else None,
+        "train_vocab_size": len(ct),
+        "val_vocab_size": len(cv),
+        "val_chars_outside_train": sorted(set(val) - set(train)),
+        "train_top5": [(k, round(v, 4)) for k, v in ct.most_common(5)],
+        "val_top5": [(k, round(v, 4)) for k, v in cv.most_common(5)],
+    }
+
+
+def corpus_overlap(train: str, val: str, ks: tuple[int, ...] = (4, 6, 8, 12, 20),
+                   *, train_sentences: tuple[str, ...] | None = None,
+                   val_sentences: tuple[str, ...] | None = None) -> dict:
     """量化验证集上下文在训练集中出现过的比例，并给出相对旧语料的对照口径。
 
     ``val_token_coverage`` 与 ``audit_corpus.py`` 完全一致：逐位置统计验证集的
     k-gram 是否落在训练集的 k-gram 集合里（token 级，非 unique 级）。
+    传入 ``train_sentences`` / ``val_sentences`` 可统计非默认语料的句子数。
     """
+    tr_s = train_sentences if train_sentences is not None else INDEPENDENT_TRAIN_SENTENCES
+    va_s = val_sentences if val_sentences is not None else INDEPENDENT_VAL_SENTENCES
     out: dict = {
         "train_chars": len(train),
         "val_chars": len(val),
-        "train_sentences": len(INDEPENDENT_TRAIN_SENTENCES),
-        "val_sentences": len(INDEPENDENT_VAL_SENTENCES),
-        "sentence_level_disjoint": True,
+        "train_sentences": len(tr_s),
+        "val_sentences": len(va_s),
+        "sentence_level_disjoint": len(set(tr_s) & set(va_s)) == 0,
         "val_charset_outside_train": sorted(set(val) - set(train)),
         "train_unique_4gram_ratio": round(
             len(set(ngrams(train, 4))) / max(len(ngrams(train, 4)), 1), 4),
@@ -148,6 +251,7 @@ def corpus_overlap(train: str, val: str, ks: tuple[int, ...] = (4, 6, 8, 12, 20)
             len(set(ngrams(val, 4)) - set(ngrams(train, 4)))
             / max(len(set(ngrams(val, 4))), 1), 4),
         "val_context_covered_by_train": {},
+        "char_distribution_divergence": char_distribution_divergence(train, val),
     }
     for k in ks:
         g_train = set(ngrams(train, k))
@@ -163,19 +267,18 @@ def corpus_overlap(train: str, val: str, ks: tuple[int, ...] = (4, 6, 8, 12, 20)
     # 旧语料（_HELDOUT_VAL_CORPUS）的公开审查值，用于并列展示，数字来自 docs/corpus_audit.json
     out["legacy_k4_coverage"] = 0.9024
     out["caveat"] = (
-        "字符级英文文本无法做到零共享 4-gram（功能片段必然重合）；本语料只把 "
+        "字符级英文文本无法做到零共享 4-gram（功能片段必然重合）；independent 语料只把 "
         "k=4 覆盖率相对旧语料显著压低，并改用句级 disjoint + 不同主题实词。"
-        "因此 val loss 仍应读作「主题外新句迁移」，不是严格的未见分布泛化。"
+        "synthetic 语料是人工伪词、分布偏移远大于自然文本，只能用于压力测试。"
+        "两份语料的 val loss 都不是严格的未见分布自然语言泛化。"
     )
     return out
 
 
 def word_bigram_novelty(train: str, val: str) -> dict:
     """补充口径：验证集中未在训练集出现过的 word bigram 占比。"""
-    tr = Counter(
-        zip(train.replace(".", " ").replace(",", " ").split(),
-            train.replace(".", " ").replace(",", " ").split()[1:])
-    )
+    tr_words = train.replace(".", " ").replace(",", " ").split()
+    tr = Counter(zip(tr_words, tr_words[1:]))
     val_words = val.replace(".", " ").replace(",", " ").split()
     pairs = list(zip(val_words, val_words[1:]))
     fresh = sum(1 for p in pairs if p not in tr)

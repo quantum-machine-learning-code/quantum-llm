@@ -21,6 +21,7 @@ from qml_lab.data import (
     load_corpus,
     load_corpus_split,
     load_independent_split,
+    load_synthetic_split,
 )
 from qml_lab.corpus_independent import assert_disjoint, word_bigram_novelty
 from qml_lab.models import RichQuantumLM, TinyLM
@@ -250,6 +251,30 @@ def check_independent_corpus() -> None:
     assert nov["novel_ratio"] > 0.80, f"验证集新词对占比过低: {nov['novel_ratio']}"
 
 
+def check_synthetic_corpus() -> None:
+    """合成语料契约（REVIEW 第 9 节）：极端分布偏移、零 UNK、音节不相交。
+
+    防止语料 B 退化成「只是另一份自然英文」，那样分布偏移压力测试就失去意义。
+    """
+    train, val = load_synthetic_split()
+    assert_disjoint(train, val)
+    assert set(val) <= set(train), "合成验证集包含训练集词表外字符（会产生 UNK）"
+    rep = corpus_overlap(train, val)
+    assert rep["sentence_level_disjoint"] is True
+    assert rep["val_context_covered_by_train"]["4"]["val_token_coverage"] < 0.05, (
+        "合成语料 k=4 覆盖率退化，不再是极端分布偏移"
+    )
+    assert rep["val_new_4gram_ratio"] > 0.90
+    # 分布差异必须显著大于 independent 语料（其 JS ≈ 0.0094）
+    js = rep["char_distribution_divergence"]["js_unigram"]
+    assert js > 0.10, f"合成语料字符分布差异过小: JS={js}"
+    a_tr, a_val = load_independent_split()
+    a_js = corpus_overlap(a_tr, a_val)["char_distribution_divergence"]["js_unigram"]
+    assert js > 5 * a_js, f"合成语料分布差异未明显超过 independent: {js} vs {a_js}"
+    nov = word_bigram_novelty(train, val)
+    assert nov["novel_ratio"] > 0.95
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通。"""
     cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
@@ -260,6 +285,7 @@ def check_quick_cli() -> None:
 def main() -> None:
     check_data_and_entropy()
     check_independent_corpus()
+    check_synthetic_corpus()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()

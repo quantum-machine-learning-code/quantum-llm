@@ -9,8 +9,11 @@ import torch
 
 # 独立语料（2026-11-13，见 docs/REVIEW.md 第 8 节）：只依赖标准库，无循环依赖。
 from .corpus_independent import (  # noqa: E402
+    char_distribution_divergence,
     corpus_overlap,
     load_independent_split,
+    load_split,
+    load_synthetic_split,
 )
 
 __all__ = [
@@ -21,7 +24,10 @@ __all__ = [
     "iter_batches",
     "corpus_entropy_floors",
     "load_independent_split",
+    "load_synthetic_split",
+    "load_split",
     "corpus_overlap",
+    "char_distribution_divergence",
 ]
 
 # 自写英文语料：技术短句重复若干遍，无版权问题，含重复结构且长度 >= 800（1668 字符，31 字符词表）

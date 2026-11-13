@@ -17,6 +17,10 @@
 > **⚠ 2026-11-07 语料审查（[REVIEW.md 第 7 节](docs/REVIEW.md)，[`audit_corpus.py`](experiments/audit_corpus.py)）**：训练集 1668 字符是同一段 417 字符文本**重复 4 遍**（unique 4-gram 仅 22.4%）；所谓「独立未见句验证集」在模型实际使用的因果上下文长度 `k=4` 上，有 **90.2%** 的 token 上下文在训练集中出现过。因此 `val PPL 4.29` 只能读作**同分布重组句的迁移**，不是未见分布泛化，也不能作为量子层带来泛化能力的证据。原始统计见 [`docs/corpus_audit.json`](docs/corpus_audit.json)。
 >
 > **✅ 2026-11-13 已补独立语料重跑（[REVIEW.md 第 8 节](docs/REVIEW.md)，[归档](docs/independent_corpus_metrics.json)）**：句级 disjoint、主题分离的新语料把 `k=4` 上下文重叠率从 **90.2% 降到 38.7%**。5-seed 受控结果显示量子层在训练集上仍显著更好（Δ=`-0.1069` nats），但在独立验证句上优势消失且方向反转（Δ=`+0.0974`，CI 跨 0），泛化间隙显著更大（`+0.2044` nats）。**量子层的优势是拟合层面的，不是泛化层面的。**
+>
+> **✅ 2026-11-13 稳健性复核（[REVIEW.md 第 9 节](docs/REVIEW.md)，[归档](docs/robustness_metrics.json)）**：把独立语料扩到 **20 seed × 1200 步**，泛化间隙差值从 `+0.1433`（300 步）扩大到 `+0.3263`（1200 步），量子验证 loss 单调上升、训练 loss 单调下降 —— **不是 300 步欠拟合假象，而是持续加剧的过拟合**；5-seed 的 `+0.2044` 属小样本高估。20 seed 下独立语料的 val 差值也变为显著（`+0.0599`，Holm 后 `p=0.0022`）。
+>
+> **⚠ 但有语料边界**：换用 `k=4` 覆盖率仅 0.24%、字符分布 JS 散度 0.2538 的极端合成语料后，两臂验证 loss 都崩到 5+ nats，gap 差值 `+0.5602` 的 CI `[-0.1406, +1.2609]` 跨 0、Holm 后不显著。**结论只在这两份自写英文语料上成立，不推广为普遍的「量子泛化更差」。**
 
 > **方法学审查要点（详见 [`docs/REVIEW.md`](docs/REVIEW.md)）**：
 > 1. **为什么初版模型（`51e3ad4`）卡在 loss `~2.5` 且必然生成 `A qubit can hold the the the...`？**
@@ -98,10 +102,37 @@
 
 ---
 
+## 稳健性复核（2026-11-13，20 seeds × 1200 步 + 极端语料）
+
+第 8 节的 `n=5 / 300 步` 结论可能只是欠拟合假象或单一语料偶然。复现：
+`python experiments/robustness_check.py`（默认 8 workers；`--quick` 为冒烟）。
+完整结果见 [REVIEW.md 第 9 节](docs/REVIEW.md)、[归档](docs/robustness_metrics.json)
+与 [三面板图](docs/figures/robustness_check.png)。
+
+![稳健性复核：间隙轨迹、验证 loss 轨迹、跨语料差值](docs/figures/robustness_check.png)
+
+| 检验 | 结果 | 判定 |
+|---|---|---|
+| 可复现性 | 1200 步训练的第 300 步检查点与第 8 节 seed 0–4 逐位一致（`max abs diff = 0`） | 两节数字可直接对照 |
+| 效应量 | 5-seed gap `+0.2044` → 20-seed `+0.1433`（seed 0–4 子集仍为 `0.2044`） | 小样本高估约 43% |
+| 收敛性 | gap 差值 `+0.0758`(100 步) → `+0.1433`(300 步) → `+0.3263`(1200 步)，Holm 后仍显著 | **不是欠拟合，是持续扩大的过拟合** |
+| 验证 loss | 20-seed 下 val 差值 `+0.0599`(300 步, `p=0.0022`) / `+0.1774`(1200 步)，Holm 后显著 | 第 8 节「不宣称显著更差」收紧为「该语料上显著更差」 |
+| 极端语料 | 新 `synthetic` 语料 `k=4` 覆盖率 0.24%、JS 0.2538；两臂 val loss 均 5+ nats，gap `+0.5602` CI 跨 0 | 压力测试超出有效范围，**结论有语料边界** |
+
+量子 val loss 从 step 100 起单调上升 `2.5305 → 2.7431`，train loss 持续下降
+`2.2982 → 1.8922`，说明训练充分；经典 val 仅 `2.4887 → 2.5657`。
+51 个检验 Bonferroni 后 35 个显著，6 个主检验 Holm 后 4 个显著（全在独立语料）。
+量子 `256 s/seed` vs 经典 `7.7 s/seed`。
+
+**两臂始终同配置、都没有各自调参**；补调参对照是下一步最该做的实验。
+不宣称量子优势，也不把「该语料上显著更差」推广为普遍结论。
+
+---
+
 ## 能做什么，不能做什么
 
 - **不是 LLM**：字符级词表 31、序列长 16、内置语料 1668 字符，没有自注意力或大规模预训练，不能对话。
-- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且该验证集 90.2% 的 k=4 上下文在训练时已见过，不能作为泛化证据；若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。**换用 k=4 重叠率仅 38.7% 的独立语料后（见上一节）**，量子层在训练集上的优势仍显著，但独立验证集上经典替身反而数值更好、泛化间隙显著更小。
+- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且该验证集 90.2% 的 k=4 上下文在训练时已见过，不能作为泛化证据；若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。**换用 k=4 重叠率仅 38.7% 的独立语料后（见独立语料重跑一节）**，量子层在训练集上的优势仍显著，但独立验证集上经典替身反而数值更好、泛化间隙显著更小。**扩到 20 seed 并训练 1200 步后（见上一节）**，该泛化间隙差值扩大到 `+0.3263` 且 Holm 后仍显著，独立验证 loss 差值也变为显著；但在 `k=4` 覆盖率 0.24% 的极端合成语料上未复现，因此不推广为普遍结论。
 - **模拟器的内存与测量墙**：`default.qubit` 状态向量维度为 $2^n$；解析模式下同时读出 48 个 Pauli 期望无需采样，但真机硬件需按对易组（QWC）拆分并增加 shots 以控制采样方差。
 - **完全离线可复现**：语料与留出验证集均内置，无需真机凭证或联网下载。
 
@@ -117,7 +148,7 @@ quantum-llm/
 ├── qml_lab/
 │   ├── utils.py                    # 随机种子、路径、JSON、参数量、终端表格
 │   ├── data.py                     # 内置训练/留出验证语料、经验条件熵下界、可复现 batch 生成器
-│   ├── corpus_independent.py       # 句级 disjoint 独立语料 + n-gram 重叠率工具
+│   ├── corpus_independent.py       # 两份语料 (independent / synthetic) + 重叠率与分布散度工具
 │   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
 │   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM
 │   ├── train.py                    # 自回归训练循环、全语料确定性评估 (evaluate_lm) 与贪心解码
@@ -126,15 +157,17 @@ quantum-llm/
 │   ├── train_llm.py                # 单组/多 seed 受控量子 vs 经典对照脚本
 │   ├── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
 │   ├── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
-│   └── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
+│   ├── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
+│   └── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7 节语料审查、第 8 节独立语料重跑）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7–9 节：语料审查 / 独立重跑 / 稳健性复核）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
 │   ├── independent_corpus_metrics.json # 独立语料 5-seed 重跑归档
-│   └── figures/                    # 实测对比图 (lm_diagnosis.png, independent_corpus.png 等)
+│   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
+│   └── figures/                    # 实测对比图 (lm_diagnosis.png, independent_corpus.png, robustness_check.png)
 └── results/                        # 运行产物（gitignore）
 ```
 
