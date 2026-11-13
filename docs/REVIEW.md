@@ -693,7 +693,7 @@ embed / causal_conv / head 逐位一致，且 `frozen` 与 `trainable_circular`
 
 ---
 
-## 12. grokking 长训练扫描（2026-11-14）：相变复现了，但不在本仓库模型里
+## 12. grokking 长训练扫描（2026-11-13）：相变复现了，但不在本仓库模型里
 
 ### 12.1 问题与文献核实
 
