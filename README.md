@@ -44,16 +44,45 @@ $p\approx0$），确认学到的是**组合泛化**而非记忆；但准确率�
 —— 量子臂数值更高，但**量子层无可证实的正贡献**。`val_loss` 差值
 `−0.3707` 虽在 Bonferroni 后显著，但 loss 不是主指标，不能据此宣称分类更强。
 
-**两个必须说清的前提**：① 随机 embedding 下扫过 3 个学习率、跑到
+**三个必须说清的前提**：① 随机 embedding 下扫过 3 个学习率、跑到
 25.5 epochs，两臂都卡在随机基线，因此给数字 token 加了**两臂共享的循环
 角度编码** $[\sin(2\pi n/112),\cos(2\pi n/112),\sin(4\pi n/112),\cos(4\pi n/112)]$
 作为经典先验 —— 这是让任务可学的必要设计，**不是量子优势**；
-② 两臂始终同配置、**都没有各自调参**（统一 `lr=0.015`）。
+② 该编码只是**初始化，不是冻结**：`nn.Embedding` 默认 `requires_grad=True`，
+Adam 每步都在更新它（第 11 节三方消融实测训练前后 RMS 漂移）；
+③ 两臂始终同配置、**都没有各自调参**（统一 `lr=0.015`）。
+
+**「把 embedding 放开再训练」的三方消融**（[REVIEW.md 第 11 节](docs/REVIEW.md)、
+[归档](docs/embedding_ablation_metrics.json)、[图](docs/figures/embedding_ablation.png)）：
+`frozen_circular`（编码初始化 + 冻结）/ `trainable_circular`（编码初始化 + 可训练，
+课题一默认）/ `trainable_random`（纯随机 + 可训练）。前两者初始权重逐位相同，
+只差一个 `requires_grad`，因此它们的差就是「放开 embedding」这一件事的净效应；
+第三者用于检查循环先验是否不可替代。
+
+**结论（5 seed × 2000 步，全量 2509 个未见组合）**：默认 `trainable_circular`
+的 embedding 本来就在训练（RMS 漂移 `0.2816` / `0.3674`），所以「放开」不是新设置，
+真正没测过的是**冻结**：
+
+| 模式 | 量子 val acc | 经典 val acc |
+| --- | --- | --- |
+| `frozen_circular` | **`0.2418 ± 0.0488`** | `0.1839 ± 0.0427` |
+| `trainable_circular`（课题一默认） | `0.1835 ± 0.0463` | `0.1462 ± 0.0447` |
+| `trainable_random` | `0.0062 ± 0.0012` | `0.0062 ± 0.0012` |
+
+放开后两臂数值一致变差（配对 `−0.0583` `[−0.1318,+0.0153]` /
+`−0.0377` `[−0.1187,+0.0433]`），但 **CI 跨 0，不能宣称显著有害**；真正显著的
+是循环先验（`+0.1773` `[+0.1200,+0.2346]` / `+0.1400` `[+0.0849,+0.1950]`）。
+纯随机 embedding 即使放开、跑满 2000 步，loss 仍停在 `4.735 ≈ ln(112)`。
+三种模式下量子−经典差 `+0.0579 / +0.0373 / +0.0000`，**9 个主检验 Holm 后
+0 个显著** —— 放开或冻结都不改变「量子层无可证实正贡献」的结论。
+另注意设计选择的影响（−5.8 pt）与量子层差异（+5.8 pt）同量级，且 2000 步
+仅约 6.4 epochs、曲线仍上升，「冻结更好」有明确的训练预算边界，不能外推。
 
 复现：`python experiments/train_addition.py`（约 13 分钟）；
 `--quick` 冒烟、`--probe` 1-seed 探针、`--probe --no-circular-embedding`
-消融、`--redraw-from docs/addition_metrics.json` 只重画图。
-完整归因与边界见 [REVIEW.md 第 10 节](docs/REVIEW.md)、
+消融、`--redraw-from docs/addition_metrics.json` 只重画图；
+`python experiments/embedding_ablation.py` 复现三方消融。
+完整归因与边界见 [REVIEW.md 第 10–11 节](docs/REVIEW.md)、
 [指标归档](docs/addition_metrics.json)。
 
 ---
@@ -206,17 +235,19 @@ quantum-llm/
 │   ├── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
 │   ├── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
 │   ├── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
-│   └── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
+│   ├── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
+│   └── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7–10 节：语料 / 独立重跑 / 稳健性 / 模 112 加法）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7–11 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
 │   ├── independent_corpus_metrics.json # 独立语料 5-seed 重跑归档
 │   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
 │   ├── addition_metrics.json       # 课题一：模 112 加法 5-seed 受控对照归档
-│   └── figures/                    # 实测对比图 (addition_accuracy.png, independent_corpus.png, robustness_check.png)
+│   ├── embedding_ablation_metrics.json # 课题一补：三模式 embedding 对照归档
+│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, ...)
 └── results/                        # 运行产物（gitignore）
 ```
 
@@ -246,6 +277,9 @@ python3 -m venv .venv
 .venv/bin/python experiments/train_addition.py                          # 5 seed x 2000 步，约 13 分钟
 .venv/bin/python experiments/train_addition.py --probe                  # 1 seed x 1000 步容量探针
 .venv/bin/python experiments/train_addition.py --probe --no-circular-embedding  # 循环编码消融
+.venv/bin/python experiments/train_addition.py --quick --embedding-mode frozen_circular  # 冻结模式冒烟
+.venv/bin/python experiments/embedding_ablation.py --quick              # 三模式聚合冒烟
+.venv/bin/python experiments/embedding_ablation.py                      # 三模式 x 5 seed 正式消融
 ```
 
 `--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。

@@ -359,6 +359,73 @@ def check_arithmetic_task() -> None:
     assert proc.returncode == 0, f"train_addition.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
 
 
+def check_embedding_modes() -> None:
+    """课题一补：三模式 embedding 的初始化对齐、梯度开关与训练漂移契约。
+
+    防止以后把「循环编码只是初始化」偷偷改成冻结（或反之），也防止
+    frozen / trainable_circular 两模式初始权重不一致导致消融失去因果解释。
+    """
+    exp_dir = str(ROOT / "experiments")
+    if exp_dir not in sys.path:
+        sys.path.insert(0, exp_dir)
+    from train_addition import EMBEDDING_MODES, build_model
+
+    assert EMBEDDING_MODES == (
+        "frozen_circular", "trainable_circular", "trainable_random"
+    )
+    inits = {}
+    for mode in EMBEDDING_MODES:
+        m_q = build_model("add_q_rich48", 0, mode)
+        m_c = build_model("add_classical", 0, mode)
+        assert torch.equal(m_q.embed.weight, m_c.embed.weight), (
+            f"{mode}: 两臂初始 embed 不一致，受控对照失效"
+        )
+        assert m_q.embed.weight.requires_grad == (mode != "frozen_circular")
+        assert m_c.embed.weight.requires_grad == (mode != "frozen_circular")
+        if mode != "trainable_random":
+            e = m_q.embed.weight.detach()
+            assert abs(e[0, 1].item() - 1.0) < 1e-6
+            assert abs(e[28, 0].item() - 1.0) < 1e-6
+        inits[mode] = m_q.embed.weight.detach().clone()
+    assert torch.equal(inits["frozen_circular"], inits["trainable_circular"]), (
+        "冻结 / 放开两模式初始权重必须逐位相同，否则无法隔离 requires_grad 的净效应"
+    )
+    assert not torch.equal(inits["frozen_circular"], inits["trainable_random"])
+
+    table = enumerate_table("+")
+    tr, _ = split_table(table, "holdout_pairs", 0.2, 0)
+    x, y = build_tensors(tr)
+    for mode, should_move in (("frozen_circular", False),
+                              ("trainable_circular", True),
+                              ("trainable_random", True)):
+        m = build_model("add_classical", 0, mode)
+        before = m.embed.weight.detach().clone()
+        opt = torch.optim.Adam(
+            [p for p in m.parameters() if p.requires_grad], lr=0.05
+        )
+        loss = torch.nn.functional.cross_entropy(
+            answer_logits(m, x[:16]), y[:16]
+        )
+        loss.backward()
+        opt.step()
+        moved = not torch.equal(m.embed.weight, before)
+        assert moved == should_move, f"{mode}: embed 训练漂移不符合预期"
+        assert np.isfinite(loss.item())
+
+    cmds = [
+        [sys.executable, str(ROOT / "experiments" / "train_addition.py"),
+         "--quick", "--embedding-mode", "frozen_circular"],
+        [sys.executable, str(ROOT / "experiments" / "embedding_ablation.py"),
+         "--quick"],
+    ]
+    for cmd in cmds:
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True,
+                              text=True, check=False)
+        assert proc.returncode == 0, (
+            f"{' '.join(cmd[1:])} 失败:\n{proc.stderr}\n{proc.stdout}"
+        )
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通。"""
     cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
@@ -371,6 +438,7 @@ def main() -> None:
     check_independent_corpus()
     check_synthetic_corpus()
     check_arithmetic_task()
+    check_embedding_modes()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()

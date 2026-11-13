@@ -4,16 +4,23 @@
 答案位只在 112 个数字类上做 CE。``add_classical`` 用 ``Linear(4,48)+Tanh``
 替换 48 维 Pauli 读出的量子线路、其余逐项不变，因此它同时是量子层消融。
 
-循环角度编码：数字 token 的 embedding 前 4 维固定为
-``[sin(2πn/112), cos(2πn/112), sin(4πn/112), cos(4πn/112)]``。这是两臂
-共享的经典先验；没有它时 1000 步后两臂都停在随机基线（1-seed 探针），
+循环角度编码：数字 token 的 embedding 前 4 维**初始化**为
+``[sin(2πn/112), cos(2πn/112), sin(4πn/112), cos(4πn/112)]``。注意这只是
+初始化，默认模式 ``trainable_circular`` 下 embedding 与其它参数一起被 Adam
+更新（归档里的 ``embedding_drift_rms`` 会实测漂移量）——它并非冻结。
+这是两臂共享的经典先验；没有它时 1000 步后两臂都停在随机基线（1-seed 探针），
 所以它不是量子优势的来源，也不应被归因于量子层。
+
+三种 embedding 模式（详见 experiments/embedding_ablation.py）：
+    frozen_circular    循环编码初始化 + 冻结（真正「不放开」）
+    trainable_circular 循环编码初始化 + 可训练（课题一默认）
+    trainable_random   纯随机初始化 + 可训练（人为先验完全拿掉）
 
 用法：
     python experiments/train_addition.py --probe      # 1 seed x 1000 步容量探针
     python experiments/train_addition.py              # 5 seed x 2000 步正式实验
     python experiments/train_addition.py --quick      # 10 步冒烟，不写归档
-    python experiments/train_addition.py --probe --no-circular-embedding  # 消融
+    python experiments/train_addition.py --probe --no-circular-embedding  # 消融别名
 
 方法学约定：
 * 每个 worker 独立 ``set_seed``，构造模型前设种子（TorchLayer 消耗 torch 全局 RNG）。
@@ -104,25 +111,37 @@ GROUP_SPECS = {
 CAVEAT = (
     "val 是未见的 (a,b) 组合而非未见数字，属于组合泛化，不是数值外推。"
     "答案位只在 112 个数字类上评估；输出头仍有 117 维但符号类不参与 loss。"
-    "数字 token 使用固定循环角度编码初始化（两臂完全相同），这是让任务可学的"
-    "经典先验，不是量子优势；1-seed 探针显示随机 embedding 下 1000 步后两臂"
-    "仍停留在随机基线，故该编码属于必要设计而非可归因于量子层的提升。"
+    "数字 token 用循环角度编码**初始化**（两臂完全相同）；默认模式下该 embedding "
+    "是可训练参数而非冻结常量，它是让任务可学的经典先验，不是量子优势。"
+    "1-seed 探针显示随机 embedding 下 1000 步后两臂仍停留在随机基线，故该编码"
+    "属于必要设计而非可归因于量子层的提升。"
     "除 embedding 初始化外，模型规格与超参与历史字符 LM 实验逐项一致。"
 )
+
+EMBEDDING_MODES = ("frozen_circular", "trainable_circular", "trainable_random")
 
 
 def _tensor_hash(t: torch.Tensor) -> str:
     return hashlib.sha256(t.detach().cpu().numpy().tobytes()).hexdigest()[:16]
 
 
-def build_model(group: str, seed: int, circular: bool = True) -> RichQuantumLM:
+def build_model(group: str, seed: int, mode: str = "trainable_circular") -> RichQuantumLM:
+    """构建模型并按 ``mode`` 设置数字 embedding 的初始化 / 梯度开关。
+
+    ``frozen_circular`` 与 ``trainable_circular`` 只差一个 requires_grad，
+    初始权重逐位相同，因此两者的对比干净地隔离了「放开 embedding」这一件事。
+    """
+    if mode not in EMBEDDING_MODES:
+        raise ValueError(f"未知 embedding 模式 {mode!r}，可选 {EMBEDDING_MODES}")
     set_seed(seed)
     spec = dict(GROUP_SPECS[group])
     spec.pop("n_qubits")
     spec.pop("n_layers")
     model = RichQuantumLM(vocab_size=VOCAB_SIZE, n_qubits=4, n_layers=1, **spec)
-    if circular:
+    if mode in ("frozen_circular", "trainable_circular"):
         circular_init(model)
+    if mode == "frozen_circular":
+        model.embed.weight.requires_grad_(False)
     return model
 
 
@@ -175,7 +194,9 @@ def run_one(task: tuple) -> dict:
     cx, cy = _subset(xtr, ytr, cfg["curve_n"])
     vx, vy = _subset(xva, yva, cfg["curve_n"])
 
-    model = build_model(group, seed, cfg["circular_embedding"])
+    mode = cfg.get("embedding_mode", "trainable_circular")
+    model = build_model(group, seed, mode)
+    embed_init = model.embed.weight.detach().clone()
     init_hashes = {
         "embed": _tensor_hash(model.embed.weight),
         "causal_conv_weight": _tensor_hash(model.causal_encoder.causal_conv.weight),
@@ -184,8 +205,11 @@ def run_one(task: tuple) -> dict:
         else _tensor_hash(model.head.weight),
     }
     n_params = sum(p.numel() for p in model.parameters())
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    opt = torch.optim.Adam(
+        [p for p in model.parameters() if p.requires_grad], lr=cfg["lr"]
+    )
     gen = iter_batches(xtr, ytr, cfg["batch_size"], seed)
     curve: list[dict] = []
     model.train()
@@ -213,6 +237,9 @@ def run_one(task: tuple) -> dict:
 
     final_train = evaluate_answers(model, xtr, ytr, cfg["eval_batch"])
     final_val = evaluate_answers(model, xva, yva, cfg["eval_batch"])
+    embed_drift = float(
+        (model.embed.weight.detach() - embed_init).pow(2).mean().sqrt()
+    )
     wall = time.perf_counter() - t0
     print(
         f"[{group} seed={seed}] val_acc={final_val['answer_accuracy']:.4f} "
@@ -223,7 +250,11 @@ def run_one(task: tuple) -> dict:
     return {
         "group": group,
         "seed": seed,
+        "embedding_mode": mode,
         "n_params": n_params,
+        "n_trainable_params": n_trainable,
+        "embedding_trainable": bool(model.embed.weight.requires_grad),
+        "embedding_drift_rms": embed_drift,
         "init_hashes": init_hashes,
         "curve": curve,
         "final": {
@@ -330,7 +361,12 @@ def main() -> None:
     ap.add_argument("--probe", action="store_true", help="1 seed x 1000 步容量探针")
     ap.add_argument("--quick", action="store_true", help="10 步冒烟，不写归档")
     ap.add_argument("--no-circular-embedding", action="store_true",
-                    help="消融：数字 token 用随机 embedding（预期学不动）")
+                    help="--embedding-mode trainable_random 的兼容别名")
+    ap.add_argument("--embedding-mode", default="trainable_circular",
+                    choices=EMBEDDING_MODES,
+                    help="frozen_circular / trainable_circular / trainable_random")
+    ap.add_argument("--metrics-out", default="", help="覆盖归档 JSON 路径")
+    ap.add_argument("--figure-out", default="", help="覆盖归档图路径")
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--batch-size", type=int, default=32)
@@ -365,8 +401,10 @@ def main() -> None:
         )
         write = True
 
+    mode = "trainable_random" if args.no_circular_embedding else args.embedding_mode
     cfg = {
-        "circular_embedding": not args.no_circular_embedding,
+        "embedding_mode": mode,
+        "circular_embedding": mode != "trainable_random",
         "op": args.op,
         "split_mode": args.split_mode,
         "val_fraction": args.val_fraction,
@@ -474,9 +512,17 @@ def main() -> None:
         "task": "mod-112 addition (Z_112): [a][+][b][=] -> c",
         "config": cfg,
         "embedding_design": {
+            "embedding_mode": mode,
+            "trainable": mode != "frozen_circular",
+            "circular_init": mode != "trainable_random",
             "circular_embedding": cfg["circular_embedding"],
             "formula": "embed[n,:4] = [sin(2πn/112), cos(2πn/112), sin(4πn/112), cos(4πn/112)]",
             "shared_by_both_arms": True,
+            "mean_embedding_drift_rms": {
+                g: float(np.mean([r["embedding_drift_rms"] for r in runs
+                                  if r["group"] == g]))
+                for g in GROUP_IDS
+            },
             "ablation_1seed_illustrative": (
                 "随机 embedding 下 1000 步 / 25.5 epochs 两臂 val acc 仍约 0.009 "
                 "（=1/112 随机基线）、loss 约 4.72=ln(112)；循环编码下 1000 步 "
@@ -515,14 +561,18 @@ def main() -> None:
         print(f"  paired {k:20s} Δ={p['mean_diff']:+.4f} "
               f"CI[{p['ci95_low']:+.4f},{p['ci95_high']:+.4f}] p={p['p_value']:.3g}")
     print("  verdict:", verdict)
+    print(f"  embedding mode={mode} trainable={mode != 'frozen_circular'} "
+          f"drift_rms={report['embedding_design']['mean_embedding_drift_rms']}")
     print(f"  weight control all_passed={weight_checks['all_passed']} | wall={elapsed:.1f}s")
 
     if write:
-        DOCS.mkdir(parents=True, exist_ok=True)
-        METRICS.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-                           encoding="utf-8")
-        _figure(report, FIGURE)
-        print(f"  archived: {METRICS}\n  figure:   {FIGURE}")
+        metrics_path = Path(args.metrics_out) if args.metrics_out else METRICS
+        figure_path = Path(args.figure_out) if args.figure_out else FIGURE
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8")
+        _figure(report, figure_path)
+        print(f"  archived: {metrics_path}\n  figure:   {figure_path}")
 
 
 if __name__ == "__main__":
