@@ -16,10 +16,13 @@ import torch.nn as nn
 from qml_lab.data import (
     build_char_data,
     corpus_entropy_floors,
+    corpus_overlap,
     iter_batches,
     load_corpus,
     load_corpus_split,
+    load_independent_split,
 )
+from qml_lab.corpus_independent import assert_disjoint, word_bigram_novelty
 from qml_lab.models import RichQuantumLM, TinyLM
 from qml_lab.quantum import make_rich_layer, make_vqc_layer, n_readout
 from qml_lab.train import evaluate_lm, greedy_sample, train_lm
@@ -228,6 +231,25 @@ def check_lm() -> None:
         assert bool(torch.isfinite(logits).all()), f"{name} logits 含 NaN/Inf"
 
 
+def check_independent_corpus() -> None:
+    """独立语料契约：句级 disjoint、零 UNK、重叠率显著低于旧留出集。
+
+    防止以后改动语料时悄悄退化回「验证集上下文几乎都在训练集见过」。
+    """
+    train, val = load_independent_split()
+    assert_disjoint(train, val)
+    assert set(val) <= set(train), "独立验证集包含训练集词表外字符（会产生 UNK）"
+    rep = corpus_overlap(train, val)
+    assert rep["sentence_level_disjoint"] is True
+    assert rep["val_context_covered_by_train"]["4"]["val_token_coverage"] < 0.5, (
+        "独立语料 k=4 覆盖率退化到 0.5 以上，不再比旧留出集 (0.9024) 明显更独立"
+    )
+    assert rep["val_new_4gram_ratio"] > 0.30
+    assert rep["train_unique_4gram_ratio"] > 0.50, "训练语料退化为复读文本"
+    nov = word_bigram_novelty(train, val)
+    assert nov["novel_ratio"] > 0.80, f"验证集新词对占比过低: {nov['novel_ratio']}"
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通。"""
     cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
@@ -237,6 +259,7 @@ def check_quick_cli() -> None:
 
 def main() -> None:
     check_data_and_entropy()
+    check_independent_corpus()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()

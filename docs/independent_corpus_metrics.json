@@ -1,0 +1,419 @@
+{
+  "purpose": "修复 REVIEW 第 7 节证据缺口：句级 disjoint、主题分离语料上的 5-seed 受控重跑",
+  "config": {
+    "qubits": 4,
+    "seq_len": 16,
+    "batch_size": 8,
+    "steps": 300,
+    "lr": 0.015,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "eval_every": 60,
+    "quick": false,
+    "train_corpus_chars": 3171,
+    "val_corpus_chars": 947,
+    "vocab_size": 29,
+    "groups": [
+      "caus_q_rich48",
+      "caus_classical"
+    ]
+  },
+  "corpus": {
+    "train_chars": 3171,
+    "val_chars": 947,
+    "train_sentences": 44,
+    "val_sentences": 14,
+    "sentence_level_disjoint": true,
+    "val_charset_outside_train": [],
+    "train_unique_4gram_ratio": 0.6269,
+    "val_new_4gram_ratio": 0.6926,
+    "val_context_covered_by_train": {
+      "4": {
+        "k": 4,
+        "train_unique": 1986,
+        "val_unique": 771,
+        "shared": 237,
+        "val_token_coverage": 0.3867
+      },
+      "6": {
+        "k": 6,
+        "train_unique": 2733,
+        "val_unique": 891,
+        "shared": 80,
+        "val_token_coverage": 0.1178
+      },
+      "8": {
+        "k": 8,
+        "train_unique": 3031,
+        "val_unique": 924,
+        "shared": 21,
+        "val_token_coverage": 0.0277
+      },
+      "12": {
+        "k": 12,
+        "train_unique": 3146,
+        "val_unique": 932,
+        "shared": 2,
+        "val_token_coverage": 0.0021
+      },
+      "20": {
+        "k": 20,
+        "train_unique": 3152,
+        "val_unique": 928,
+        "shared": 0,
+        "val_token_coverage": 0.0
+      }
+    },
+    "legacy_k4_coverage": 0.9024,
+    "caveat": "字符级英文文本无法做到零共享 4-gram（功能片段必然重合）；本语料只把 k=4 覆盖率相对旧语料显著压低，并改用句级 disjoint + 不同主题实词。因此 val loss 仍应读作「主题外新句迁移」，不是严格的未见分布泛化。",
+    "word_bigram_novelty": {
+      "val_word_bigrams": 170,
+      "novel_word_bigrams": 160,
+      "novel_ratio": 0.9412
+    },
+    "train_entropy_floors_nats": {
+      "0": 2.8618,
+      "1": 2.2655,
+      "2": 1.4751,
+      "4": 0.3309,
+      "8": 0.0263
+    },
+    "val_entropy_floors_nats": {
+      "0": 2.8518,
+      "1": 2.1048,
+      "2": 1.1211,
+      "4": 0.1768,
+      "8": 0.0089
+    },
+    "train_window16_floor_nats": 0.5469
+  },
+  "legacy_corpus": {
+    "val_context_covered_by_train": {
+      "4": {
+        "k": 4,
+        "train_unique": 373,
+        "val_unique": 339,
+        "shared": 302,
+        "val_token_coverage": 0.9024
+      },
+      "6": {
+        "k": 6,
+        "train_unique": 409,
+        "val_unique": 369,
+        "shared": 288,
+        "val_token_coverage": 0.7851
+      },
+      "8": {
+        "k": 8,
+        "train_unique": 416,
+        "val_unique": 373,
+        "shared": 247,
+        "val_token_coverage": 0.664
+      },
+      "12": {
+        "k": 12,
+        "train_unique": 417,
+        "val_unique": 371,
+        "shared": 172,
+        "val_token_coverage": 0.4636
+      },
+      "20": {
+        "k": 20,
+        "train_unique": 417,
+        "val_unique": 363,
+        "shared": 102,
+        "val_token_coverage": 0.281
+      }
+    },
+    "legacy_k4_coverage": 0.9024
+  },
+  "legacy_results": {
+    "corpus": {
+      "qubits": 4,
+      "seq_len": 16,
+      "batch_size": 8,
+      "steps": 300,
+      "lr": 0.015,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "eval_every": 60,
+      "quick": false,
+      "train_corpus_chars": 1668,
+      "val_corpus_chars": 382,
+      "vocab_size": 31
+    },
+    "groups": {
+      "caus_q_rich48": {
+        "eval_loss_mean": 0.8270751989455449,
+        "eval_loss_std": 0.07174396929285914,
+        "eval_ppl_mean": 2.2913353222161703,
+        "eval_ppl_std": 0.1644626454343031,
+        "val_loss_mean": 1.4493630091349285,
+        "val_loss_std": 0.12896006187782033,
+        "val_ppl_mean": 4.290251561621014,
+        "val_ppl_std": 0.5945929409918677,
+        "final_batch_loss_mean": 0.8118419647216797,
+        "final_batch_loss_std": 0.134714838395112,
+        "within_run_tail20_batch_std": 0.09819783661735573,
+        "seconds_mean": 37.75752366660017,
+        "seconds_std": 0.20768928290116845
+      },
+      "caus_classical": {
+        "eval_loss_mean": 1.1483014860607328,
+        "eval_loss_std": 0.06171531646383622,
+        "eval_ppl_mean": 3.1577531976824664,
+        "eval_ppl_std": 0.20176133395697562,
+        "val_loss_mean": 1.6265971183776855,
+        "val_loss_std": 0.11657235340263561,
+        "val_ppl_mean": 5.113184725941224,
+        "val_ppl_std": 0.5617598401243541,
+        "final_batch_loss_mean": 1.190746808052063,
+        "final_batch_loss_std": 0.09771840291758309,
+        "within_run_tail20_batch_std": 0.10911584662809592,
+        "seconds_mean": 0.8999825475992111,
+        "seconds_std": 0.04152227034548004
+      }
+    },
+    "paired_q_minus_c": {
+      "train_eval_loss_mean_diff": -0.32122660000000003,
+      "heldout_val_loss_mean_diff": -0.1772342,
+      "heldout_val_ci95": [
+        -0.40192417231385413,
+        0.04745577231385409
+      ]
+    },
+    "k4_coverage": 0.9024,
+    "train_k4_entropy_nats": 0.1
+  },
+  "weight_control_checks": {
+    "per_seed": {
+      "0": {
+        "embed": true,
+        "causal_conv": true,
+        "head_first_layer": true
+      },
+      "1": {
+        "embed": true,
+        "causal_conv": true,
+        "head_first_layer": true
+      },
+      "2": {
+        "embed": true,
+        "causal_conv": true,
+        "head_first_layer": true
+      },
+      "3": {
+        "embed": true,
+        "causal_conv": true,
+        "head_first_layer": true
+      },
+      "4": {
+        "embed": true,
+        "causal_conv": true,
+        "head_first_layer": true
+      }
+    },
+    "all_passed": true
+  },
+  "groups": {
+    "caus_q_rich48": {
+      "eval_loss_mean": 2.104511501561457,
+      "eval_loss_std": 0.020008696747558233,
+      "eval_perplexity_mean": 8.20440480541119,
+      "eval_perplexity_std": 0.16345506508071936,
+      "val_loss_mean": 2.5755759684244794,
+      "val_loss_std": 0.06915896626300104,
+      "val_perplexity_mean": 13.164264000371565,
+      "val_perplexity_std": 0.9225720221964143,
+      "total_seconds_mean": 46.18088366000084,
+      "total_seconds_std": 3.005770833454815,
+      "final_loss_mean": 2.074460029602051,
+      "final_loss_std": 0.08300537830895295,
+      "params": 4509,
+      "readout_dim": 48,
+      "per_seed": {
+        "0": {
+          "eval_loss": 2.112735221134358,
+          "val_loss": 2.522291310628255,
+          "val_perplexity": 12.45710708985491,
+          "seconds": 47.62753040000098
+        },
+        "1": {
+          "eval_loss": 2.114266956271838,
+          "val_loss": 2.677672831217448,
+          "val_perplexity": 14.551190785804083,
+          "seconds": 47.60885100000087
+        },
+        "2": {
+          "eval_loss": 2.075532525029015,
+          "val_loss": 2.5018572489420574,
+          "val_perplexity": 12.205140908723921,
+          "seconds": 47.5686225999998
+        },
+        "3": {
+          "eval_loss": 2.093605391344233,
+          "val_loss": 2.5801485697428386,
+          "val_perplexity": 13.199099000738164,
+          "seconds": 47.28985449999891
+        },
+        "4": {
+          "eval_loss": 2.126417414027842,
+          "val_loss": 2.5959098815917967,
+          "val_perplexity": 13.408782216736748,
+          "seconds": 40.809559800003626
+        }
+      }
+    },
+    "caus_classical": {
+      "eval_loss_mean": 2.2114556547385362,
+      "eval_loss_std": 0.01686222717183859,
+      "eval_perplexity_mean": 9.130035664402447,
+      "eval_perplexity_std": 0.154386083125393,
+      "val_loss_mean": 2.4781530253092448,
+      "val_loss_std": 0.03850182294981952,
+      "val_perplexity_mean": 11.926303263100825,
+      "val_perplexity_std": 0.4595766371030208,
+      "total_seconds_mean": 1.2581425399999717,
+      "total_seconds_std": 0.01894112518577688,
+      "final_loss_mean": 2.2343286514282226,
+      "final_loss_std": 0.05411452539000927,
+      "params": 4737,
+      "readout_dim": 48,
+      "per_seed": {
+        "0": {
+          "eval_loss": 2.1925385154072363,
+          "val_loss": 2.4726941426595053,
+          "val_perplexity": 11.854341154658474,
+          "seconds": 1.228246400001808
+        },
+        "1": {
+          "eval_loss": 2.214957500821981,
+          "val_loss": 2.43173828125,
+          "val_perplexity": 11.378644182812339,
+          "seconds": 1.2522200999992492
+        },
+        "2": {
+          "eval_loss": 2.199190149355174,
+          "val_loss": 2.4528073628743488,
+          "val_perplexity": 11.62092512188044,
+          "seconds": 1.2632969999976922
+        },
+        "3": {
+          "eval_loss": 2.236104888532629,
+          "val_loss": 2.524560801188151,
+          "val_perplexity": 12.485410481791098,
+          "seconds": 1.275653799999418
+        },
+        "4": {
+          "eval_loss": 2.2144872195756613,
+          "val_loss": 2.5089645385742188,
+          "val_perplexity": 12.292195374361778,
+          "seconds": 1.2712954000016907
+        }
+      }
+    }
+  },
+  "generalization_gap_per_group": {
+    "caus_q_rich48": 0.4711,
+    "caus_classical": 0.2667
+  },
+  "paired_comparisons": {
+    "train_eval_loss": {
+      "per_seed_diff": [
+        -0.079803,
+        -0.100691,
+        -0.123658,
+        -0.142499,
+        -0.08807
+      ],
+      "mean_diff": -0.10694415317707913,
+      "std_diff": 0.025862605470838483,
+      "ci95_half": 0.03211266611288785,
+      "ci95_low": -0.139056819289967,
+      "ci95_high": -0.07483148706419128,
+      "significant_95": true,
+      "bonferroni_alpha_per_test": 0.0125,
+      "bonferroni_familywise_level": 0.95,
+      "bonferroni_ci_low": -0.1568479343937372,
+      "bonferroni_ci_high": -0.057040371960421055,
+      "bonferroni_significant": true
+    },
+    "val_loss": {
+      "per_seed_diff": [
+        0.049597,
+        0.245935,
+        0.04905,
+        0.055588,
+        0.086945
+      ],
+      "mean_diff": 0.09742294311523443,
+      "std_diff": 0.08447324535116076,
+      "ci95_half": 0.10488738756396979,
+      "ci95_low": -0.007464444448735355,
+      "ci95_high": 0.20231033067920423,
+      "significant_95": false,
+      "bonferroni_alpha_per_test": 0.0125,
+      "bonferroni_familywise_level": 0.95,
+      "bonferroni_ci_low": -0.06557433724070856,
+      "bonferroni_ci_high": 0.26042022347117744,
+      "bonferroni_significant": false
+    },
+    "val_perplexity": {
+      "per_seed_diff": [
+        0.602766,
+        3.172547,
+        0.584216,
+        0.713689,
+        1.116587
+      ],
+      "mean_diff": 1.2379607372707393,
+      "std_diff": 1.102618514027748,
+      "ci95_half": 1.3690817126211867,
+      "ci95_low": -0.13112097535044742,
+      "ci95_high": 2.6070424498919262,
+      "significant_95": false,
+      "bonferroni_alpha_per_test": 0.0125,
+      "bonferroni_familywise_level": 0.95,
+      "bonferroni_ci_low": -0.8896220057564825,
+      "bonferroni_ci_high": 3.365543480297961,
+      "bonferroni_significant": false
+    },
+    "generalization_gap": {
+      "per_seed_diff": [
+        0.1294,
+        0.346625,
+        0.172708,
+        0.198087,
+        0.175015
+      ],
+      "mean_diff": 0.20436709629231356,
+      "std_diff": 0.08330761784840593,
+      "ci95_half": 0.10344006985848297,
+      "ci95_low": 0.10092702643383059,
+      "ci95_high": 0.3078071661507965,
+      "significant_95": true,
+      "bonferroni_alpha_per_test": 0.0125,
+      "bonferroni_familywise_level": 0.95,
+      "bonferroni_ci_low": 0.043618979113034445,
+      "bonferroni_ci_high": 0.3651152134715927,
+      "bonferroni_significant": true
+    }
+  },
+  "sign_flip_vs_legacy": {
+    "legacy_val_diff_q_minus_c": -0.1772342,
+    "independent_val_diff_q_minus_c": 0.09742294311523443,
+    "sign_flipped": true,
+    "note": "旧语料（k=4 覆盖率 90.2%）上量子−经典的 val 差值为负（量子数值更好但不显著）；独立语料（38.7%）上差值转正。两次 CI 都跨 0，因此只能说『优势消失且方向反转』，不能宣称量子在独立语料上显著更差。"
+  },
+  "caveat": "本实验是 4-qubit 状态向量模拟的玩具级字符 LM；新语料只是句级 disjoint + 主题分离，字符级英文仍共享功能 4-gram，val loss 应读作「主题外新句迁移」而非严格 OOD 泛化。配对 CI 为 n=5 双侧 95% Student-t，另报 Bonferroni(2 检验) 校正判定。"
+}

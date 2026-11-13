@@ -42,6 +42,187 @@
       "val_token_coverage": 0.281
     }
   },
-  "train_corpus_entropy_floors_error": "TypeError(\"corpus_entropy_floors() got an unexpected keyword argument 'max_k'\")",
+  "train_corpus_entropy_floors": {
+    "-1": {
+      "entropy_nats": 3.4339872044851463,
+      "loss": 3.4339872044851463,
+      "perplexity": 31.0,
+      "unique_contexts": 1,
+      "window16_loss": 3.4339872044851463,
+      "window16_perplexity": 31.0,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "0": {
+      "entropy_nats": 2.8493054717503097,
+      "loss": 2.8493054717503097,
+      "perplexity": 17.275779156289012,
+      "unique_contexts": 1,
+      "window16_loss": 2.8493054717503097,
+      "window16_perplexity": 17.275779156289012,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "1": {
+      "entropy_nats": 1.970083453422029,
+      "loss": 1.970083453422029,
+      "perplexity": 7.171274930808518,
+      "unique_contexts": 31,
+      "window16_loss": 1.970083453422029,
+      "window16_perplexity": 7.171274930808518,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "2": {
+      "entropy_nats": 0.7937969112075265,
+      "loss": 0.7937969112075265,
+      "perplexity": 2.211778429632742,
+      "unique_contexts": 183,
+      "window16_loss": 0.8673148200959329,
+      "window16_perplexity": 2.3805101658124497,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "3": {
+      "entropy_nats": 0.22328465009048667,
+      "loss": 0.22328465009048667,
+      "perplexity": 1.2501763859139718,
+      "unique_contexts": 324,
+      "window16_loss": 0.36811659161852306,
+      "window16_perplexity": 1.4450105052664013,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "4": {
+      "entropy_nats": 0.10003830024123421,
+      "loss": 0.10003830024123421,
+      "perplexity": 1.1052132471990177,
+      "unique_contexts": 373,
+      "window16_loss": 0.26797893236600545,
+      "window16_perplexity": 1.3073195975940142,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "5": {
+      "entropy_nats": 0.06461296693936855,
+      "loss": 0.06461296693936855,
+      "perplexity": 1.0667460784778184,
+      "unique_contexts": 395,
+      "window16_loss": 0.2414099323896062,
+      "window16_perplexity": 1.27304278983179,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "6": {
+      "entropy_nats": 0.022537334426590706,
+      "loss": 0.022537334426590706,
+      "perplexity": 1.0227932188499864,
+      "unique_contexts": 409,
+      "window16_loss": 0.2124829350370714,
+      "window16_perplexity": 1.2367450083774856,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "7": {
+      "entropy_nats": 0.0033384572212399534,
+      "loss": 0.0033384572212399534,
+      "perplexity": 1.0033440360760775,
+      "unique_contexts": 415,
+      "window16_loss": 0.20048363678372721,
+      "window16_perplexity": 1.2219936163306175,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "8": {
+      "entropy_nats": 0.0033404683400479296,
+      "loss": 0.0033404683400479296,
+      "perplexity": 1.0033460539221684,
+      "unique_contexts": 416,
+      "window16_loss": 0.20048476803805668,
+      "window16_perplexity": 1.2219949987169685,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "9": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "10": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "11": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "12": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "13": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "14": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "15": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    },
+    "16": {
+      "entropy_nats": 0.0,
+      "loss": 0.0,
+      "perplexity": 1.0,
+      "unique_contexts": 417,
+      "window16_loss": 0.19881453386803272,
+      "window16_perplexity": 1.2199556844547816,
+      "uniform_nats": 3.4339872044851463,
+      "uniform_perplexity": 31.0
+    }
+  },
   "caveat": "n-gram 覆盖率是必要条件而非充分条件：即使上下文见过，模型仍需组合出新的句子级续写；但 k=4 覆盖 90% 以上意味着「留出验证集」无法排除记忆/查表式解法，val PPL 4.29 不能作为量子层带来泛化能力的证据。"
 }

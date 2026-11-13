@@ -7,6 +7,12 @@ from pathlib import Path
 
 import torch
 
+# 独立语料（2026-11-13，见 docs/REVIEW.md 第 8 节）：只依赖标准库，无循环依赖。
+from .corpus_independent import (  # noqa: E402
+    corpus_overlap,
+    load_independent_split,
+)
+
 __all__ = [
     "load_corpus",
     "load_corpus_split",
@@ -14,6 +20,8 @@ __all__ = [
     "encode_with_vocab",
     "iter_batches",
     "corpus_entropy_floors",
+    "load_independent_split",
+    "corpus_overlap",
 ]
 
 # 自写英文语料：技术短句重复若干遍，无版权问题，含重复结构且长度 >= 800（1668 字符，31 字符词表）

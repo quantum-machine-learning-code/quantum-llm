@@ -15,6 +15,8 @@
 ## 快速结论（5-Seed 受控实验结果）
 
 > **⚠ 2026-11-07 语料审查（[REVIEW.md 第 7 节](docs/REVIEW.md)，[`audit_corpus.py`](experiments/audit_corpus.py)）**：训练集 1668 字符是同一段 417 字符文本**重复 4 遍**（unique 4-gram 仅 22.4%）；所谓「独立未见句验证集」在模型实际使用的因果上下文长度 `k=4` 上，有 **90.2%** 的 token 上下文在训练集中出现过。因此 `val PPL 4.29` 只能读作**同分布重组句的迁移**，不是未见分布泛化，也不能作为量子层带来泛化能力的证据。原始统计见 [`docs/corpus_audit.json`](docs/corpus_audit.json)。
+>
+> **✅ 2026-11-13 已补独立语料重跑（[REVIEW.md 第 8 节](docs/REVIEW.md)，[归档](docs/independent_corpus_metrics.json)）**：句级 disjoint、主题分离的新语料把 `k=4` 上下文重叠率从 **90.2% 降到 38.7%**。5-seed 受控结果显示量子层在训练集上仍显著更好（Δ=`-0.1069` nats），但在独立验证句上优势消失且方向反转（Δ=`+0.0974`，CI 跨 0），泛化间隙显著更大（`+0.2044` nats）。**量子层的优势是拟合层面的，不是泛化层面的。**
 
 > **方法学审查要点（详见 [`docs/REVIEW.md`](docs/REVIEW.md)）**：
 > 1. **为什么初版模型（`51e3ad4`）卡在 loss `~2.5` 且必然生成 `A qubit can hold the the the...`？**
@@ -66,10 +68,40 @@
 
 ---
 
+## 独立语料重跑（2026-11-13，5 seeds）
+
+第 7 节指出旧留出集不足以支撑泛化结论；本节是补齐后的结果。复现：
+`python experiments/independent_corpus.py`（约 2 分钟，`--quick` 为冒烟）。
+语料见 [`qml_lab/corpus_independent.py`](qml_lab/corpus_independent.py)，
+完整归档见 [`docs/independent_corpus_metrics.json`](docs/independent_corpus_metrics.json)，
+对比图见 [`docs/figures/independent_corpus.png`](docs/figures/independent_corpus.png)。
+
+新语料：训练集 3171 字符 / 44 句互不重复，验证集 947 字符 / 14 句主题完全不同（航海、烘焙、地质、天气、园艺），
+**句级 disjoint**、验证集零 UNK、新 word-bigram 占 94.1%；训练集 k=4 条件熵下界从 `0.1000` 升到 `0.3309` nats，任务显著变难。
+
+![独立语料覆盖率与 5-seed loss 对比](docs/figures/independent_corpus.png)
+
+| 组 | train loss | 独立 val loss | val PPL | 泛化间隙 | 墙钟 / seed |
+|---|---|---|---|---|---|
+| `caus_q_rich48`（量子） | **`2.1045 ± 0.0200`** | `2.5756 ± 0.0692` | `13.164` | `0.4711` | `46.2 s` |
+| `caus_classical`（经典替身） | `2.2115 ± 0.0169` | **`2.4782 ± 0.0385`** | **`11.926`** | **`0.2667`** | `1.3 s` |
+
+配对差值（量子 − 经典，`n=5`，4 检验 Bonferroni）：train `−0.1069`（FWI CI `[-0.1568, -0.0570]`，**显著**）；
+独立 val `+0.0974`（FWI CI `[-0.0656, +0.2604]`，不显著）；
+**泛化间隙 `+0.2044`**（FWI CI `[+0.0436, +0.3651]`，**显著**）。
+
+**结论**：旧语料上量子−经典的 val 差值为 `−0.1772`（不显著），独立语料上变成 `+0.0974`（仍不显著）——
+90.2% 的上下文重叠确实把 val 伪装成了泛化能力。量子层的可复现优势只在训练集成立；
+独立验证句上经典替身数值更好且泛化间隙显著更小。不宣称量子优势，也**不**宣称量子显著更差
+（两个 val 主检验的 CI 都跨 0）。跨语料绝对 loss 不可逐位比较（词表 29 vs 31、任务难度不同）；
+验证集仍共享 38.7% 的功能 4-gram，不是严格 OOD。
+
+---
+
 ## 能做什么，不能做什么
 
 - **不是 LLM**：字符级词表 31、序列长 16、内置语料 1668 字符，没有自注意力或大规模预训练，不能对话。
-- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且该验证集 90.2% 的 k=4 上下文在训练时已见过，不能作为泛化证据；若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。
+- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且该验证集 90.2% 的 k=4 上下文在训练时已见过，不能作为泛化证据；若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。**换用 k=4 重叠率仅 38.7% 的独立语料后（见上一节）**，量子层在训练集上的优势仍显著，但独立验证集上经典替身反而数值更好、泛化间隙显著更小。
 - **模拟器的内存与测量墙**：`default.qubit` 状态向量维度为 $2^n$；解析模式下同时读出 48 个 Pauli 期望无需采样，但真机硬件需按对易组（QWC）拆分并增加 shots 以控制采样方差。
 - **完全离线可复现**：语料与留出验证集均内置，无需真机凭证或联网下载。
 
@@ -85,6 +117,7 @@ quantum-llm/
 ├── qml_lab/
 │   ├── utils.py                    # 随机种子、路径、JSON、参数量、终端表格
 │   ├── data.py                     # 内置训练/留出验证语料、经验条件熵下界、可复现 batch 生成器
+│   ├── corpus_independent.py       # 句级 disjoint 独立语料 + n-gram 重叠率工具
 │   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
 │   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM
 │   ├── train.py                    # 自回归训练循环、全语料确定性评估 (evaluate_lm) 与贪心解码
@@ -92,14 +125,16 @@ quantum-llm/
 ├── experiments/
 │   ├── train_llm.py                # 单组/多 seed 受控量子 vs 经典对照脚本
 │   ├── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
-│   └── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
+│   ├── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
+│   └── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整实验方法学审查与瓶颈诊断报告（第 7 节为语料审查）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7 节语料审查、第 8 节独立语料重跑）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
-│   ├── corpus_audit.json           # 语料重叠统计归档
-│   └── figures/                    # 实测归档对比图 (lm_diagnosis.png, lm_loss.png 等)
+│   ├── corpus_audit.json           # 旧语料重叠统计归档
+│   ├── independent_corpus_metrics.json # 独立语料 5-seed 重跑归档
+│   └── figures/                    # 实测对比图 (lm_diagnosis.png, independent_corpus.png 等)
 └── results/                        # 运行产物（gitignore）
 ```
 

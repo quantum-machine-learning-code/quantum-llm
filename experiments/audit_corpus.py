@@ -65,7 +65,7 @@ def main() -> int:
           f"{result['train_unique_4gram_ratio']:.3f}", flush=True)
 
     try:
-        floors = corpus_entropy_floors(train, max_k=8)
+        floors = corpus_entropy_floors(train, max_context=8)
         result["train_corpus_entropy_floors"] = floors
     except Exception as exc:  # 诊断性字段，失败不影响主结论
         result["train_corpus_entropy_floors_error"] = repr(exc)
