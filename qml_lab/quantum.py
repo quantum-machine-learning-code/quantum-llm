@@ -105,9 +105,9 @@ def make_observables(n_qubits: int, spec: str):
 
     * ``z`` / ``x`` / ``y`` 各贡献 ``n`` 个单比特 Pauli 期望；
     * ``zz`` 贡献 ``n`` 个相邻环 ``Z_i Z_{i+1}`` 关联；
-    * ``zzall`` 贡献所有 ``n(n-1)`` 个含 Z 主导的两体正交关联（``i < j`` 的 ``Z_i Z_j`` 与 ``Z_i X_j``）；
-    * ``xxall`` 贡献所有 ``n(n-1)`` 个含 X 主导的两体正交关联（``i < j`` 的 ``X_i X_j`` 与 ``X_i Y_j``）；
-    * ``yyall`` 贡献所有 ``n(n-1)`` 个含 Y 主导的两体正交关联（``i < j`` 的 ``Y_i Y_j`` 与 ``Y_i Z_j``）。
+    * ``zzall`` 贡献所有 ``n(n-1)`` 个含 Z 主导的有向两体正交关联（``i < j`` 的 ``Z_i Z_j`` 与 ``Z_i X_j``，共 ``2 * n(n-1)/2 = n(n-1)`` 项，区别于单向全对的 ``n(n-1)/2``）；
+    * ``xxall`` 贡献所有 ``n(n-1)`` 个含 X 主导的有向两体正交关联（``i < j`` 的 ``X_i X_j`` 与 ``X_i Y_j``）；
+    * ``yyall`` 贡献所有 ``n(n-1)`` 个含 Y 主导的有向两体正交关联（``i < j`` 的 ``Y_i Y_j`` 与 ``Y_i Z_j``）。
 
     在 ``n_qubits = 4`` 下：
     * ``"z"`` -> 4 维
@@ -116,7 +116,7 @@ def make_observables(n_qubits: int, spec: str):
     * ``"z+x+zz"`` -> 12 维
     * ``"z+x+y+zz"`` -> 16 维
     * ``"z+x+y+zzall"`` -> 24 维
-    * ``"z+x+y+zzall+xxall+yyall"`` -> 48 维（12 个单比特 + 36 个正交两体关联，首次超过 31 维词表秩限制）
+    * ``"z+x+y+zzall+xxall+yyall"`` -> 48 维（12 个单比特 ``X/Y/Z`` + 36 个有向正交两体关联，首次超过 31 维词表秩限制）
     """
     parts = [p.strip().lower() for p in spec.split("+") if p.strip()]
     unknown = [p for p in parts if p not in _READOUT_PARTS]

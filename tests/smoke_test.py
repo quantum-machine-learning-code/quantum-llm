@@ -1,9 +1,10 @@
-"""离线冒烟与受控契约测试：直接 python tests/smoke_test.py 运行，不依赖 pytest / 不联网。"""
+"""离线冒烟与受控契约测试：支持 `pytest` 或直接 `python tests/smoke_test.py` 运行，不联网。"""
 from __future__ import annotations
 
 import math
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -488,10 +489,30 @@ def check_grokking_scan() -> None:
 
 
 def check_quick_cli() -> None:
-    """验证 train_llm.py --quick 可正常跑通。"""
-    cmd = [sys.executable, str(ROOT / "experiments" / "train_llm.py"), "--quick"]
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, f"train_llm.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+    """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            sys.executable,
+            str(ROOT / "experiments" / "train_llm.py"),
+            "--quick",
+            "--out",
+            tmpdir,
+        ]
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, f"train_llm.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+
+
+# Export pytest-discoverable test_* aliases for all check_* suites.
+test_data_and_entropy = check_data_and_entropy
+test_rich_quantum_layers = check_rich_quantum_layers
+test_causal_strictness_and_seed_control = check_causal_strictness_and_seed_control
+test_lm = check_lm
+test_independent_corpus = check_independent_corpus
+test_synthetic_corpus = check_synthetic_corpus
+test_arithmetic_task = check_arithmetic_task
+test_embedding_modes = check_embedding_modes
+test_grokking_scan = check_grokking_scan
+test_quick_cli = check_quick_cli
 
 
 def main() -> None:

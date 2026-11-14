@@ -8,9 +8,9 @@ from torch import nn
 import torch.nn.functional as F
 
 try:
-    from .quantum import make_rich_layer, make_vqc_layer, n_readout
+    from .quantum import make_rich_layer, n_readout
 except ImportError:
-    from quantum import make_rich_layer, make_vqc_layer, n_readout
+    from quantum import make_rich_layer, n_readout
 
 __all__ = [
     "CausalContextEncoder",

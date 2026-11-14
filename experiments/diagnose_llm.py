@@ -31,7 +31,7 @@ from qml_lab.data import (
     load_corpus_split,
 )
 from qml_lab.models import RichQuantumLM
-from qml_lab.train import evaluate_lm, greedy_sample, train_lm
+from qml_lab.train import greedy_sample, train_lm
 from qml_lab.utils import (
     count_parameters,
     ensure_dir,

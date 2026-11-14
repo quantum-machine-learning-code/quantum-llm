@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,9 +19,9 @@ from qml_lab.data import (
     iter_batches,
     load_corpus_split,
 )
-from qml_lab.models import RichQuantumLM, TinyLM
-from qml_lab.quantum import make_rich_layer, n_readout
-from qml_lab.train import evaluate_lm, greedy_sample, train_lm
+from qml_lab.models import RichQuantumLM
+from qml_lab.quantum import n_readout
+from qml_lab.train import greedy_sample, train_lm
 from qml_lab.utils import (
     count_parameters,
     ensure_dir,

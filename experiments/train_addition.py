@@ -273,8 +273,6 @@ def run_one(task: tuple) -> dict:
 
 
 def _holm(pairs: dict, keys: list[str]) -> dict:
-    from scipy import stats
-
     items = sorted(keys, key=lambda k: pairs[k]["p_value"])
     m = len(items)
     out = {}

@@ -54,13 +54,12 @@ from qml_lab.data import (  # noqa: E402
     build_char_data,
     corpus_entropy_floors,
     iter_batches,
-    load_corpus_split,
     load_independent_split,
     corpus_overlap,
 )
 from qml_lab.corpus_independent import word_bigram_novelty  # noqa: E402
 from qml_lab.train import train_lm  # noqa: E402
-from qml_lab.utils import count_parameters, ensure_dir, set_seed  # noqa: E402
+from qml_lab.utils import count_parameters, ensure_dir  # noqa: E402
 
 GROUP_IDS = ("caus_q_rich48", "caus_classical")
 CAVEAT = (
