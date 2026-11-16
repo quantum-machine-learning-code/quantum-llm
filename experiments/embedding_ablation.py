@@ -91,97 +91,171 @@ def _values(runs: list[dict], mode: str, group: str, metric: str) -> list[float]
 
 
 def _figure(report: dict, path: Path) -> None:
+    """全中文主线图（2026-11-16 按项目级出图规范重做）。
+
+    旧版三面板全是英文缩写、没有结论卡，图例压曲线、数值列挤在轴外，
+    被指出「看都看不懂」。现在四个面板围绕同一个问题：默认模式本来就放开
+    embedding，循环先验才是决定能不能学的因素。
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
 
     per_mode = report["per_mode"]
-    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.3))
-
-    # (a) 三模式 x 两臂的最终全量 val acc
-    ax = axes[0]
-    xs = np.arange(len(MODES))
-    w = 0.36
-    for j, gid in enumerate(GROUP_IDS):
-        vals = [per_mode[m]["aggregate"][gid]["val_accuracy_mean"] for m in MODES]
-        errs = [per_mode[m]["aggregate"][gid]["val_accuracy_std"] for m in MODES]
-        bars = ax.bar(xs + (j - 0.5) * w, vals, w, yerr=errs, capsize=3,
-                      color=COLORS[gid], alpha=0.85, label=ARM_LABELS[gid])
-        for b, v in zip(bars, vals):
-            ax.text(b.get_x() + b.get_width() / 2, v + 0.004, f"{v:.3f}",
-                    ha="center", va="bottom", fontsize=8)
-    ax.axhline(RANDOM_BASELINE_ACCURACY, color="#888780", ls=":", lw=1,
-               label="random 1/112")
-    ax.set_xticks(xs)
-    ax.set_xticklabels([LABELS[m].replace(" ", "\n") for m in MODES], fontsize=8)
-    ax.set_ylabel("val top-1 accuracy")
-    ax.set_title("(a) unseen (a,b) pairs, full val set")
-    ax.legend(fontsize=8)
-    ax.grid(alpha=0.25, axis="y")
-
-    # (b) val acc 学习曲线
-    ax = axes[1]
-    linestyles = {"frozen_circular": "-", "trainable_circular": "--",
-                  "trainable_random": ":"}
-    for mode in MODES:
-        for gid in GROUP_IDS:
-            curves = [r["curve"] for r in _runs(report["runs"], mode, gid)]
-            if not curves:
-                continue
-            steps = [c["step"] for c in curves[0]]
-            ys = np.array([[c["val_acc"] for c in cu] for cu in curves])
-            mu = ys.mean(0)
-            ax.plot(steps, mu, linestyles[mode], color=COLORS[gid], alpha=0.9,
-                    label=f"{LABELS[mode]} / {ARM_LABELS[gid]}")
-            if len(curves) > 1:
-                sd = ys.std(0, ddof=1)
-                ax.fill_between(steps, mu - sd, mu + sd, color=COLORS[gid], alpha=0.07)
-    ax.axhline(RANDOM_BASELINE_ACCURACY, color="#888780", ls=":", lw=1)
-    ax.set_ylim(0.0, 0.33)  # 顶部留出图例空间，不遮住最高那条曲线
-    ax.set_xlabel("training steps")
-    ax.set_ylabel(f"val top-1 accuracy ({report['config']['curve_n']}-subset)")
-    ax.set_title("(b) learning curves")
-    ax.legend(fontsize=6.5, loc="upper left", framealpha=0.9)
-    ax.grid(alpha=0.25)
-
-    # (c) 两个隔离效应的配对差 + 95% CI
-    ax = axes[2]
-    effects = report["cross_mode_paired"]
-    keys = [k for k in effects if k.endswith("|val_accuracy")]
-    ys = np.arange(len(keys))
-    for i, k in enumerate(keys):
-        p = effects[k]["ci"]
-        ax.plot([p["ci95_low"], p["ci95_high"]], [i, i],
-                color=COLORS["add_q_rich48"], lw=2)
-        ax.plot([p["mean_diff"]], [i], "o", color=COLORS["add_q_rich48"], ms=6)
-        # 数值列放到 axes 右侧外部，避免与 CI 线或其它行文字重叠
-        ax.text(1.02, i,
-                f"{p['mean_diff']:+.3f} [{p['ci95_low']:+.3f}, {p['ci95_high']:+.3f}]",
-                transform=ax.get_yaxis_transform(), va="center", fontsize=6.8,
-                clip_on=False)
-    ax.axvline(0, color="#444444", lw=1)
-    short = {
-        "unfreeze_effect": "trainable - frozen",
-        "circular_prior_effect": "circular - random",
-        "frozen_vs_random": "frozen - random",
+    interp = report.get("interpretation", {})
+    n_seed = len(report["config"]["seeds"])
+    C_MUTE = "#6B7280"
+    C_INK = "#20242B"
+    MODE_CN = {
+        "frozen_circular": "冻结圆编码",
+        "trainable_circular": "可训练圆编码\n（课题一默认）",
+        "trainable_random": "随机初始化\n可训练",
     }
-    arm_short = {"add_q_rich48": "Q", "add_classical": "C"}
-    ax.set_yticks(ys)
-    ax.set_yticklabels(
-        [f"{short[k.split('|')[0]]} / {arm_short[k.split('|')[1]]}" for k in keys],
-        fontsize=7,
-    )
-    ax.set_ylim(-0.6, len(keys) - 0.4)
-    ax.set_xlabel("paired val accuracy difference (95% CI)")
-    ax.set_title("(c) isolated embedding effects")
-    ax.grid(alpha=0.25, axis="x")
+    ARM_CN = {"add_q_rich48": "量子层", "add_classical": "经典层"}
+    EFFECT_CN = {
+        "unfreeze_effect": "放开 − 冻结",
+        "circular_prior_effect": "圆编码 − 随机",
+        "frozen_vs_random": "冻结 − 随机",
+    }
 
-    fig.tight_layout()
-    fig.subplots_adjust(right=0.80, wspace=0.48)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    with plt.rc_context({"font.sans-serif": ["Microsoft YaHei", "SimHei",
+                                             "Noto Sans SC", "DejaVu Sans"],
+                         "axes.unicode_minus": False}):
+        fig, axes = plt.subplots(2, 2, figsize=(14.4, 9.7))
+        fig.subplots_adjust(left=0.125, right=0.972, top=0.858, bottom=0.112,
+                            hspace=0.52, wspace=0.28)
+        fig.suptitle("默认模式本来就放开 embedding；真正决定能不能学的是循环先验",
+                     fontsize=17, fontweight="bold", color=C_INK, y=0.972)
+        fig.text(0.5, 0.918,
+                 f"模 112 加法 · 3 种 embedding 模式 × 量子/经典两臂 × {n_seed} seed"
+                 " · 同切分 / 同步数 / 同超参 · 数值为全量评估均值 ± 标准差",
+                 ha="center", fontsize=10, color="#555555")
+
+        # ---------- (a) 三模式 × 两臂：全量验证准确率 ----------
+        ax = axes[0, 0]
+        xs = np.arange(len(MODES))
+        w = 0.36
+        for j, gid in enumerate(GROUP_IDS):
+            vals = [per_mode[m]["aggregate"][gid]["val_accuracy_mean"] for m in MODES]
+            errs = [per_mode[m]["aggregate"][gid]["val_accuracy_std"] for m in MODES]
+            bars = ax.bar(xs + (j - 0.5) * w, vals, w, yerr=errs,
+                          color=COLORS[gid], alpha=0.9, label=ARM_CN[gid],
+                          error_kw=dict(ecolor="#555555", capsize=0, lw=1))
+            for b, v in zip(bars, vals):
+                # 数字抬到柱顶上方并加白底，避免误差棒横线被读成负号
+                ax.text(b.get_x() + b.get_width() / 2, v + 0.012, f"{v:.3f}",
+                        ha="center", va="bottom", fontsize=9, fontweight="bold",
+                        color=COLORS[gid],
+                        bbox=dict(fc="white", ec="none", alpha=1.0, pad=0.6))
+        ax.axhline(RANDOM_BASELINE_ACCURACY, color="#9AA0A6", ls=":", lw=1.2,
+                   label=f"随机猜 1/112 = {RANDOM_BASELINE_ACCURACY:.3f}")
+        ax.set_xticks(xs)
+        ax.set_xticklabels([MODE_CN[m] for m in MODES], fontsize=9.5)
+        ax.set_ylim(0, 0.32)
+        ax.set_ylabel("验证集 top-1 准确率", fontsize=9.5)
+        ax.set_title("(a) 拿掉循环先验，两臂都掉回随机基线",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.legend(fontsize=8.5, loc="upper right", framealpha=0.92)
+        ax.grid(alpha=0.22, axis="y")
+
+        # ---------- (b) 验证准确率学习曲线（子集采样，仅看趋势） ----------
+        ax = axes[0, 1]
+        linestyles = {"frozen_circular": "-", "trainable_circular": "--",
+                      "trainable_random": ":"}
+        for mode in MODES:
+            for gid in GROUP_IDS:
+                curves = [r["curve"] for r in _runs(report["runs"], mode, gid)]
+                if not curves:
+                    continue
+                steps = [c["step"] for c in curves[0]]
+                ys = np.array([[c["val_acc"] for c in cu] for cu in curves])
+                mu = ys.mean(0)
+                ax.plot(steps, mu, linestyles[mode], color=COLORS[gid],
+                        alpha=0.9, lw=1.9,
+                        label=f"{MODE_CN[mode].replace(chr(10), '')} · {ARM_CN[gid]}")
+                if len(curves) > 1:
+                    sd = ys.std(0, ddof=1)
+                    ax.fill_between(steps, mu - sd, mu + sd,
+                                    color=COLORS[gid], alpha=0.06)
+        ax.axhline(RANDOM_BASELINE_ACCURACY, color="#9AA0A6", ls=":", lw=1.2)
+        ax.set_ylim(0.0, 0.38)  # 顶部给两列图例留空，不压曲线
+        ax.set_xlabel("训练步数", fontsize=9.5)
+        ax.set_ylabel(f"验证集准确率（{report['config']['curve_n']} 条子集采样，仅看趋势）",
+                      fontsize=8.8)
+        ax.set_title("(b) 三种模式的验证曲线：随机初始化全程贴着随机基线",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.legend(fontsize=7.0, ncol=2, loc="upper left", framealpha=0.94)
+        ax.grid(alpha=0.22)
+
+        # ---------- (c) 隔离效应的配对差 + 95% 置信区间 ----------
+        ax = axes[1, 0]
+        effects = report["cross_mode_paired"]
+        keys = [k for k in effects if k.endswith("|val_accuracy")]
+        ys = np.arange(len(keys))
+        for i, k in enumerate(keys):
+            p = effects[k]["ci"]
+            part = k.split("|")
+            col = COLORS[part[1]]
+            ax.plot([p["ci95_low"], p["ci95_high"]], [i, i], color=col, lw=2.2)
+            ax.plot([p["mean_diff"]], [i], "o", color=col, ms=6)
+            # 数值放在子图内部右侧（右对齐），不再挤到轴外压住 (d) 面板
+            ax.text(0.49, i,
+                    f"{p['mean_diff']:+.3f} [{p['ci95_low']:+.3f}, {p['ci95_high']:+.3f}]",
+                    ha="right", va="center", fontsize=7.0, color="#333333")
+        ax.axvline(0, color="#444444", lw=1.2)
+        ax.set_xlim(-0.20, 0.50)
+        ax.set_yticks(ys)
+        ax.set_yticklabels(
+            [f"{EFFECT_CN.get(k.split('|')[0], k.split('|')[0])} · "
+             f"{ARM_CN[k.split('|')[1]]}" for k in keys], fontsize=8.5)
+        ax.set_ylim(-0.65, len(keys) - 0.35)
+        ax.invert_yaxis()  # 第一个效应排在最上，阅读顺序自上而下
+        ax.set_xlabel("验证准确率配对差（0 = 无差异；双侧 95% 置信区间）", fontsize=9.2)
+        ax.set_title("(c) 「放开 vs 冻结」两条置信区间都跨 0",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.grid(alpha=0.22, axis="x")
+
+        # ---------- (d) 结论卡 ----------
+        ax = axes[1, 1]
+        ax.axis("off")
+        ax.set_title("(d) 这轮能说什么 / 不能说什么",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.add_patch(Rectangle((0.005, 0.035), 0.99, 0.895,
+                               transform=ax.transAxes,
+                               facecolor="#F7F8FA", edgecolor="#D5D9DE", lw=1.1))
+        n_tests = interp.get("n_primary_tests", "?")
+        n_sig = interp.get("n_primary_holm_significant", "?")
+        cards = [
+            ("[已证实] 默认「可训练圆编码」的 embedding 一直在训练，"
+             "Adam 每步更新；不是这轮才放开", "#B35C18"),
+            ("[已证实] 循环先验决定可学：随机初始化两臂都停在 0.006"
+             "（随机猜 0.009）", "#137A5A"),
+            (f"[未证实] 冻结更好：配对 95% CI 跨 0；{n_tests} 个主检验 "
+             f"Holm 校正后仅 {n_sig} 个显著", "#C0392B"),
+            ("[未证实] 任何量子层正贡献：量子 − 经典配对 CI 跨 0", "#C0392B"),
+            ("[口 径] (a)(d) 全量评估均值；(b) 子集采样只看趋势；"
+             "(c) 配对差与 95% CI", C_MUTE),
+            ("[边 界] 本图只谈「加先验」的 embedding 消融；"
+             "不加先验的 grokking 见 §13", C_MUTE),
+        ]
+        for i, (txt, col) in enumerate(cards):
+            ax.text(0.028, 0.865 - i * 0.128, txt, transform=ax.transAxes,
+                    fontsize=8.9, color=col, va="center", linespacing=1.5)
+        ax.text(0.028, 0.065,
+                "数据：docs/embedding_ablation_metrics.json · "
+                "两臂同 seed / 同切分 / 同超参 / 同步数",
+                transform=ax.transAxes, fontsize=7.5, color=C_MUTE, va="center")
+
+        fig.text(0.5, 0.035,
+                 "注：(a) 与 (d) 引用全量评估数值，(b) 使用子集采样曲线，两处口径不同；"
+                 "结论以 (a)(c) 的配对统计为准。",
+                 ha="center", fontsize=8.5, color=C_MUTE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+
 
 
 def _weight_controls(runs: list[dict], seeds: list[int]) -> dict:

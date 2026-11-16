@@ -414,116 +414,198 @@ def _aggregate(runs: list[dict]) -> dict:
 # 画图
 # --------------------------------------------------------------------------- #
 def _figure(report: dict, path: Path) -> None:
+    """全中文（2026-11-16 按项目级出图规范重做）。
+
+    §12 旧版把「没观察到相变」归因为架构缺少乘法交互 / 傅里叶能力，已在
+    REVIEW §13 撤回：rich 连记忆都没完成，且与正对照的 lr / wd / 数据量 /
+    步数四项都不同。本图只记录现象，不再画任何架构结论。
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(2, 2, figsize=(14.5, 9.4))
     pilot = report["pilot"]["per_condition"]
     confirm = report["confirm"]["per_condition"]
+    cfg = report["config"]
+    C_INK, C_MUTE = "#20242B", "#6B7280"
+    C_CTRL, C_SEL, C_GREY = "#1D9D75", "#D85A30", "#9AA0A6"
+    ARCH_CN = {"R": "本仓库", "F": "冻结圆编码", "T": "可训练圆编码",
+               "CTRL": "正对照"}
+    CONFIRM_CN = {
+        "ctrl_random": "随机配置对照",
+        "best_random": "最佳随机配置",
+        "frozen": "冻结圆编码（加先验）",
+        "trainable_circular": "可训练圆编码（加先验）",
+        "control_mlp": "二次 MLP 正对照",
+        "control_mlp_matched": "二次 MLP 正对照（同超参）",
+    }
 
-    # (a) pilot 各条件最终 val acc（探索性）
-    ax = axes[0, 0]
-    names = list(pilot)
-    vals = [pilot[n]["phase"]["final_val_accuracy"] for n in names]
-    ys = np.arange(len(names))
-    sel = report["pilot"]["selected_grokking_condition"]
-    bar_colors = ["#1D9D75" if n.startswith("CTRL") else
-                  ("#D85A30" if n == sel else "#888780") for n in names]
-    ax.barh(ys, vals, color=bar_colors, alpha=0.85)
-    ax.axvline(RANDOM_BASELINE_ACCURACY, color="#444444", ls=":", lw=1)
-    ax.set_yticks(ys)
-    ax.set_yticklabels([n.replace("CTRL/", "C/").replace("mlp/", "")
-                        for n in names], fontsize=6.8)
-    ax.set_xlabel("final val accuracy (1-seed pilot)")
-    ax.set_title(f"(a) pilot sweep @ {report['config']['pilot_steps']} steps — exploratory")
-    ax.grid(alpha=0.25, axis="x")
+    def _num(s: str) -> str:
+        return "0" + s if s.startswith(".") else s
 
-    # (b) 5-seed 确认：val acc 曲线
-    ax = axes[0, 1]
-    for name, d in confirm.items():
-        curves = d["curves"]
-        if not curves:
-            continue
-        steps = [c["step"] for c in curves[0]]
-        ys_a = np.array([[c["val_acc"] for c in cu] for cu in curves])
-        mu = ys_a.mean(0)
-        ax.plot(steps, mu, color=COLORS.get(name, "#444444"), lw=1.8, label=name)
-        if len(curves) > 1:
-            sd = ys_a.std(0, ddof=1)
-            ax.fill_between(steps, mu - sd, mu + sd, color=COLORS.get(name, "#444444"),
-                            alpha=0.10)
-    ax.axhline(RANDOM_BASELINE_ACCURACY, color="#888780", ls=":", lw=1, label="random 1/112")
-    ax.axhline(PHASE_GEN_ACC, color="#444444", ls="--", lw=1, label="gen threshold 0.90")
-    ax.set_xscale("log")
-    ax.set_ylim(-0.02, 1.02)
-    ax.set_xlabel("training steps (log)")
-    ax.set_ylabel("val top-1 accuracy")
-    ax.set_title(f"(b) 5-seed confirm @ {report['config']['confirm_steps']} steps")
-    ax.legend(fontsize=6.5, framealpha=0.92,
-              bbox_to_anchor=(0.99, 0.60), loc="center right")
-    ax.grid(alpha=0.25)
+    def cond_one_line(name: str) -> str:
+        """把 R/adamw/wd.1/lr.05 之类缩写翻成单行中文短标签（19 条不重叠）。"""
+        parts = name.split("/")
+        arch = ARCH_CN.get(parts[0], parts[0])
+        opt = "AdamW" if any(p.startswith("adamw") for p in parts) else "Adam"
+        wd = _num(next((p[2:] for p in parts if p.startswith("wd")), "0"))
+        vf = next((p[2:] for p in parts if p.startswith("vf")), "")
+        lr = next((p[2:] for p in parts if p.startswith("lr")), "")
+        emb = next((p[3:] for p in parts if p.startswith("emb")), "")
+        s = f"{arch} {opt} 衰减{wd}"
+        if vf:
+            s += f" 数据{_num(vf)}"
+        if lr:
+            s += f" lr{_num(lr)}"
+        if emb:
+            s += f" 嵌入×{_num(emb)}"
+        return s
 
-    # (c) 真正发生相变的正对照：train/val 是否分离 + 傅里叶 R^2
-    ax = axes[1, 0]
-    focus = "control_mlp" if "control_mlp" in confirm else max(
-        confirm, key=lambda k: confirm[k]["aggregate"]["val_accuracy_mean"])
-    d = confirm.get(focus)
-    if d and d["curves"]:
-        curves = d["curves"]
-        steps = [c["step"] for c in curves[0]]
-        for key, color, label in (("train_acc", "#185FA5", "train acc"),
-                                  ("val_acc", "#D85A30", "val acc")):
-            arr = np.array([[c[key] for c in cu] for cu in curves])
-            ax.plot(steps, arr.mean(0), color=color, lw=1.8, label=label)
-        ax.set_ylabel("accuracy", color="#333333")
-        ax.set_ylim(-0.02, 1.02)
-        ax2 = ax.twinx()
-        r2 = np.array([[c["r2_k1"] for c in cu] for cu in curves])
-        ax2.plot(steps, r2.mean(0), color="#1D9D75", lw=1.8, ls="--",
-                 label="progress: R²(sin/cos k=1)")
-        ax2.set_ylabel("R²", color="#1D9D75")
-        ax2.set_ylim(-0.05, 1.05)
-        ph = d["phase_per_seed"][0]
-        ax.axvline(ph["memorization_step"] or steps[0], color="#185FA5", ls=":", lw=1)
-        ax.axvline(ph["generalization_step"] or steps[0], color="#D85A30", ls=":", lw=1)
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, fontsize=7, loc="center right")
-    # 相变发生在 500~1500 步，线性轴比对数轴更能看清 train/val 的分离
-    ax.set_xlabel("training steps")
-    ax.set_title(f"(c) delayed generalization? — {focus} "
-                 f"({d['n_grokking_seeds']}/{len(d['curves'])} seeds grok)")
-    ax.grid(alpha=0.25)
+    with plt.rc_context({"font.sans-serif": ["Microsoft YaHei", "SimHei",
+                                             "Noto Sans SC", "DejaVu Sans"],
+                         "axes.unicode_minus": False}):
+        fig, axes = plt.subplots(2, 2, figsize=(14.4, 10.4))
+        fig.subplots_adjust(left=0.205, right=0.972, top=0.855, bottom=0.125,
+                            hspace=0.55, wspace=0.31)
+        fig.suptitle("加先验的长训练扫描：能学会，但「架构瓶颈」结论已撤回",
+                     fontsize=17, fontweight="bold", color=C_INK, y=0.972)
+        fig.text(0.5, 0.918,
+                 "模 112 加法 · 1 seed 探索扫描 + 5 seed 确认 · "
+                 "不加先验的 grokking 对照见 §13 / grokking_no_prior.png",
+                 ha="center", fontsize=10, color="#555555")
 
-    # (d) 量子臂成本外推
-    ax = axes[1, 1]
-    q = report["quantum"]["cost_extrapolation"]
-    labels = ["classical\n(measured)", "quantum\n(measured)"]
-    per_step = [q["classical_seconds_per_step"], q["quantum_seconds_per_step"]]
-    bars = ax.bar(labels, per_step, color=["#185FA5", "#534AB7"], alpha=0.85, width=0.55)
-    ax.set_yscale("log")
-    ax.set_ylim(bottom=min(per_step) / 4, top=max(per_step) * 40)
-    for b, v in zip(bars, per_step):
-        ax.text(b.get_x() + b.get_width() / 2, v * 1.35, f"{v:.4f} s/step",
-                ha="center", va="bottom", fontsize=8)
-    ax.set_ylabel("seconds per training step (log)")
-    ax.set_title(f"(d) cost: {q['hours_to_1e5_steps_quantum']:.1f} h vs "
-                 f"{q['hours_to_1e5_steps_classical']:.1f} h for 10⁵ steps")
-    ax.text(0.02, 0.97,
-            f"quantum / classical = {q['cost_ratio']:.1f}×\n"
-            f"quantum budget used: {report['config']['quantum_steps']} steps "
-            f"({report['config']['quantum_steps'] / GROKKING_STEP_SCALE:.1%} of 10⁵)",
-            transform=ax.transAxes, ha="left", va="top", fontsize=7.5,
-            bbox=dict(fc="white", ec="#cccccc", alpha=0.9))
-    ax.grid(alpha=0.25, axis="y")
+        # ---------- (a) 1 seed 探索扫描 ----------
+        ax = axes[0, 0]
+        names = list(pilot)
+        vals = [pilot[n]["phase"]["final_val_accuracy"] for n in names]
+        ys = np.arange(len(names))
+        sel = report["pilot"]["selected_grokking_condition"]
+        # 所有 CTRL 条件都是二次 MLP 正对照：统一染绿，否则会被误读成
+        # 「本仓库的灰色配置也跳到了 1.0」
+        bar_colors = [C_CTRL if n.startswith("CTRL/") else
+                      (C_SEL if n == sel else C_GREY) for n in names]
+        ax.barh(ys, vals, color=bar_colors, alpha=0.88)
+        ax.axvline(RANDOM_BASELINE_ACCURACY, color="#444444", ls=":", lw=1.2)
+        ax.set_yticks(ys)
+        ax.set_yticklabels([cond_one_line(n) for n in names], fontsize=7.0)
+        ax.set_xlim(0, 1.05)
+        ax.set_xlabel("最终验证准确率（1 seed pilot，探索性，不作结论）", fontsize=9.2)
+        ax.set_title("(a) 探索扫描：跳到高准确率的都是二次 MLP 正对照",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        from matplotlib.patches import Patch
+        ax.legend(handles=[
+            Patch(facecolor=C_CTRL, alpha=0.88, label="二次 MLP 正对照"),
+            Patch(facecolor=C_SEL, alpha=0.88, label="预选的本仓库条件"),
+            Patch(facecolor=C_GREY, alpha=0.88, label="其余本仓库配置"),
+        ], fontsize=7.0, loc="lower right", framealpha=0.94)
+        ax.grid(alpha=0.22, axis="x")
 
-    fig.tight_layout()
-    fig.subplots_adjust(left=0.11, wspace=0.26, hspace=0.32)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+        # ---------- (b) 5 seed 确认曲线 ----------
+        ax = axes[0, 1]
+        for name, d in confirm.items():
+            curves = d["curves"]
+            if not curves:
+                continue
+            steps = [c["step"] for c in curves[0]]
+            arr = np.array([[c["val_acc"] for c in cu] for cu in curves])
+            mu = arr.mean(0)
+            col = COLORS.get(name, "#444444")
+            ax.plot(steps, mu, color=col, lw=1.9,
+                    label=CONFIRM_CN.get(name, name))
+            if len(curves) > 1:
+                sd = arr.std(0, ddof=1)
+                ax.fill_between(steps, mu - sd, mu + sd, color=col, alpha=0.09)
+        ax.axhline(RANDOM_BASELINE_ACCURACY, color="#9AA0A6", ls=":", lw=1.2,
+                   label=f"随机猜 1/112 = {RANDOM_BASELINE_ACCURACY:.3f}")
+        ax.axhline(PHASE_GEN_ACC, color="#444444", ls="--", lw=1,
+                   label=f"泛化阈值 {PHASE_GEN_ACC:.2f}")
+        ax.set_xscale("log")
+        ax.set_ylim(-0.02, 1.20)  # 顶部留给图例，不压曲线
+        ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_xlabel("训练步数（对数轴）", fontsize=9.5)
+        ax.set_ylabel("验证集 top-1 准确率（曲线为子集采样）", fontsize=9.2)
+        ax.set_title("(b) 5 seed 确认：加先验两组稳步学，正对照突然跳升",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.legend(fontsize=7.0, ncol=2, loc="upper left", framealpha=0.94)
+        ax.grid(alpha=0.22)
+
+        # ---------- (c) 正对照的相变：train/val 分离 + 傅里叶进度指标 ----------
+        ax = axes[1, 0]
+        focus = "control_mlp" if "control_mlp" in confirm else max(
+            confirm, key=lambda k: confirm[k]["aggregate"]["val_accuracy_mean"])
+        d = confirm.get(focus)
+        if d and d["curves"]:
+            curves = d["curves"]
+            steps = [c["step"] for c in curves[0]]
+            for key, color, label in (("train_acc", "#185FA5", "训练准确率"),
+                                      ("val_acc", "#D85A30", "验证准确率")):
+                arr = np.array([[c[key] for c in cu] for cu in curves])
+                ax.plot(steps, arr.mean(0), color=color, lw=1.9, label=label)
+            ax.set_ylabel("准确率", fontsize=9.2)
+            ax.set_ylim(-0.02, 1.02)
+            ax2 = ax.twinx()
+            r2 = np.array([[c["r2_k1"] for c in cu] for cu in curves])
+            ax2.plot(steps, r2.mean(0), color=C_CTRL, lw=1.8, ls="--",
+                     label="进度指标：sin/cos 一次谐波 R²")
+            ax2.set_ylabel("进度指标 R²", fontsize=9.2, color=C_CTRL)
+            ax2.set_ylim(-0.05, 1.05)
+            ph = d["phase_per_seed"][0]
+            ax.axvline(ph["memorization_step"] or steps[0], color="#185FA5",
+                       ls=":", lw=1)
+            ax.axvline(ph["generalization_step"] or steps[0], color="#D85A30",
+                       ls=":", lw=1)
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2, fontsize=7.2, loc="lower right",
+                      framealpha=0.92)
+        n_grok = d["n_grokking_seeds"] if d else 0
+        n_curves = len(d["curves"]) if d else 0
+        ax.set_xlabel("训练步数（线性轴，便于看前 1500 步的跳变）", fontsize=9.2)
+        ax.set_title(f"(c) 正对照确实相变：{n_grok}/{n_curves} seed 出现延迟泛化",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.grid(alpha=0.22)
+
+        # ---------- (d) 量子臂成本外推 ----------
+        ax = axes[1, 1]
+        q = report["quantum"]["cost_extrapolation"]
+        labels = ["经典（实测）", "量子（实测）"]
+        per_step = [q["classical_seconds_per_step"], q["quantum_seconds_per_step"]]
+        bars = ax.bar(labels, per_step, color=["#185FA5", "#534AB7"],
+                      alpha=0.88, width=0.55)
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=min(per_step) / 4, top=max(per_step) * 80)
+        for b, v in zip(bars, per_step):
+            ax.text(b.get_x() + b.get_width() / 2, v * 1.5, f"{v:.4f} 秒/步",
+                    ha="center", va="bottom", fontsize=8.5,
+                    bbox=dict(fc="white", ec="none", alpha=0.9, pad=0.5))
+        ax.set_ylabel("每训练步耗时（秒，对数轴）", fontsize=9.2)
+        ax.set_title(f"(d) 量子臂跑 10 万步约需 "
+                     f"{q['hours_to_1e5_steps_quantum']:.1f} 小时（经典 "
+                     f"{q['hours_to_1e5_steps_classical']:.2f} 小时）",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        qsteps = cfg["quantum_steps"]
+        ax.text(0.02, 0.97,
+                f"量子 / 经典 ≈ {q['cost_ratio']:.1f}×\n"
+                f"本轮量子预算：{qsteps} 步（10 万步的 "
+                f"{qsteps / GROKKING_STEP_SCALE:.1%}）",
+                transform=ax.transAxes, ha="left", va="top", fontsize=8,
+                bbox=dict(fc="white", ec="#cccccc", alpha=0.92))
+        ax.grid(alpha=0.22, axis="y")
+
+        fig.text(0.5, 0.045,
+                 "[已撤回] §12「架构缺少乘法交互 / 傅里叶能力」：与正对照的 "
+                 "lr / wd / 数据量 / 步数四项都不同，且 rich 连记忆都没完成",
+                 ha="center", fontsize=8.3, color="#C0392B")
+        fig.text(0.5, 0.018,
+                 f"数据：docs/grokking_metrics.json · pilot 1 seed（探索性）/ "
+                 f"确认 5 seed · 确认步数 {cfg['confirm_steps']:,} · "
+                 f"曲线为 {cfg['curve_n']} 条子集采样，结论以全量评估为准",
+                 ha="center", fontsize=7.8, color=C_MUTE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+
 
 
 # --------------------------------------------------------------------------- #
