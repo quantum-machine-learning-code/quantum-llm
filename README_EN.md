@@ -16,6 +16,40 @@ At current hardware and state-vector simulator limits ($2^n$ state dimension), b
 
 ---
 
+## Control-design correction (2026-11-16 — supersedes all numbers below)
+
+> Historical "quantum vs classical" comparisons in this repository were **not clean
+> ablations**. The two arms differed in readout `scale` (5.0 vs 1.0), initialization
+> (`near_identity_init` True vs False), and bottleneck capacity (12 vs 240
+> parameters). Consequently all such numbers — including `0.1817 vs 0.1365`,
+> "0 significant after Holm", and the claim "no demonstrable quantum contribution" —
+> are **downgraded to observations between different configurations**. They support
+> neither "no quantum advantage" nor "quantum advantage".
+>
+> Two further mismatches: the `RICH/*` conditions in the grokking long-training
+> runs were actually the classical arm (`group="add_classical"`), and Task 1
+> evaluates only the last position (`answer_logits`), i.e. one-shot 112-class
+> classification rather than autoregressive generation. The quantum layer also
+> runs position-wise and carries no cross-step state, so sequence modeling is
+> entirely classical — see [`docs/REVIEW.md` §14](docs/REVIEW.md) (Chinese).
+>
+> **Fixed**: `--matched` mode, where `assert_matched()` hard-asserts that the two
+> arm specs are identical except `transform_type` (shared learnable scale,
+> symmetric small initialization, shared `LayerNorm` for initial-output
+> calibration); results in `docs/matched_metrics.json`.
+> **Still unresolved**: the 12 vs 240 parameter gap is structural for a 4→48
+> interface and needs a capacity-matched sweep. `--matched` therefore compares
+> two transformation implementations, not a quantum-layer causal effect.
+>
+> **Measured outcome (§14.6)**: both `--matched` runs **fail the device-validity
+> check**. Without normalization the classical arm stays at the random baseline
+> in 3/5 seeds; with a shared `LayerNorm` both arms collapse to `0.0062`.
+> The archives `docs/matched_metrics.json` and
+> `docs/matched_v1_no_norm_metrics.json` are therefore **configuration
+> diagnostics only** and must not be used to rank the two arms. This in turn
+> shows the historical "both arms learned" numbers depended on a `scale=5.0`
+> tuned for the quantum arm alone.
+
 ## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
 
 > **Task definition**: Compute $(a + b) \bmod 112$ over $\{0, \dots, 111\}$ (`111+1=0` wrap-around, `0+0=0` identity). The vocabulary has **117 tokens: 112 integer tokens + four operators (`+ - * /`) + `=`**. Only addition equations are generated in this round; the remaining operators reserve vocabulary slots for follow-up arithmetic tasks (`/` does not always have a unique inverse on the non-field $\mathbb{Z}_{112}$).

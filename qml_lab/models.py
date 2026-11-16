@@ -172,6 +172,12 @@ class TinyLM(nn.Module):
 
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
         z = self.bottleneck_features(idx)  # (B, T, readout_dim)
+        # 对称读出归一化：仅 matched 对照开启，两臂同一层、同一初值。
+        # 量子层近恒等小初始化与经典层小权重初始化的输出尺度天然差一个量级，
+        # 光让配置字段相同并不能让两臂真的站在同一起跑线上。
+        norm = getattr(self, "readout_norm", None)
+        if norm is not None:
+            z = norm(z)
         return self.head(z * self.out_scale)  # (B, T, V) logits
 
 
@@ -207,6 +213,7 @@ class RichQuantumLM(TinyLM):
         classical_width: int | None = None,
         diff_method: str = "backprop",
         shots: int | None = None,
+        readout_norm: bool = False,
     ):
         nn.Module.__init__(self)
         if context_mode not in ("token", "causal"):
@@ -284,9 +291,23 @@ class RichQuantumLM(TinyLM):
                 nn.Linear(self.n_qubits, self.readout_dim),
                 nn.Tanh(),
             )
+            # 与量子臂 ``near_identity_init`` 对称：量子臂把旋转角初始化为
+            # N(0, init_std^2) 使初始线路接近恒等；经典臂同样用小权重 +
+            # 零偏置，避免「只给一边加初始化补丁」造成的对照不干净。
+            # 历史配置里 add_classical 的 near_identity_init=False，此分支不生效。
+            if self.near_identity_init:
+                with torch.no_grad():
+                    nn.init.normal_(self.transform[0].weight, std=init_std)
+                    nn.init.zeros_(self.transform[0].bias)
             self.q = None
         else:
             self.transform = nn.Identity()
             self.q = None
 
+        # matched 对照专用：两臂完全相同的 LayerNorm（同结构、同初值），
+        # 消除「量子近恒等线路 vs 经典小权重线性层」初始输出尺度差一个量级
+        # 带来的起跑线不一致。历史配置 readout_norm=False，不会进入 forward。
+        self.readout_norm = (
+            nn.LayerNorm(self.readout_dim) if readout_norm else None
+        )
         _set_scale(self, scale)

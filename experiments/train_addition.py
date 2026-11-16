@@ -108,6 +108,102 @@ GROUP_SPECS = {
     },
 }
 
+# --------------------------------------------------------------------------- #
+# 严格对照配置（2026-11-16）：两臂 spec 除 transform_type 外逐项完全相同。
+#
+# 历史 GROUP_SPECS 混了三个变量：transform_type、scale(5.0 vs 1.0)、
+# near_identity_init(True vs False)，且两臂中间层容量 12 vs 240；
+# 因此历史「量子 vs 经典」差值不能归因于量子层。这里消除所有人为引入的
+# 不一致，并把无法消除的结构性容量差异显式记录、显式声明为限制。
+# --------------------------------------------------------------------------- #
+MATCHED_GROUP_SPECS = {
+    g: {
+        **GROUP_SPECS["add_q_rich48"],
+        "transform_type": t,
+        "scale": "learnable",       # 两臂同初值 5.0、同为可训练标量，不再一边放大一边不放大
+        "near_identity_init": True, # 两臂都做对称的小初始化（经典臂分支见 models.py）
+        "readout_norm": True,       # 两臂同一 LayerNorm，校准初始输出尺度（见 §14.6）
+    }
+    for g, t in zip(GROUP_IDS, ("quantum", "classical"))
+}
+
+
+def assert_matched(specs: dict, label: str = "matched") -> dict:
+    """硬约束：两臂除 transform_type 外必须逐项相等，否则直接拒绝跑实验。
+
+    这是把方法学约定「量子层消融 = 换成同结构经典层、其余不变」写进代码，
+    防止以后再靠手工看配置来保证对照干净。
+    """
+    a, b = (specs[g] for g in GROUP_IDS)
+    keys = sorted(set(a) | set(b))
+    diff = {k: (a.get(k, "<missing>"), b.get(k, "<missing>"))
+            for k in keys
+            if k != "transform_type" and a.get(k, "<missing>") != b.get(k, "<missing>")}
+    if diff:
+        raise AssertionError(f"[{label}] 两臂除 transform_type 外还有差异，拒绝运行: {diff}")
+    if a["transform_type"] == b["transform_type"]:
+        raise AssertionError(f"[{label}] 两臂 transform_type 相同，对照无意义")
+    return {"label": label, "differing_keys": ["transform_type"],
+           "other_keys_identical": True, "n_compared_keys": len(keys)}
+
+
+def annotate_matched(report: dict) -> dict:
+    """装置有效性检查：两臂都必须真的学动，否则任何「谁更好」都没有意义。
+
+    与项目里「报 0 相变前先确认 train≥0.95」同一条方法学约定：
+    报「两组无差异 / 有差异」之前，先确认两组都离开了随机基线。
+    """
+    agg = report.get("aggregate", {})
+    learned = report.get("learned_compositional_generalization", {})
+    runs = report.get("runs", [])
+    base = report.get("interpretation", {}).get("random_baseline_accuracy", 1 / 112)
+    per_arm = {}
+    for g in GROUP_IDS:
+        vals = [r["final"]["val_accuracy"] for r in runs if r["group"] == g]
+        n_ok = sum(1 for v in vals if v > 2 * base)
+        need = (min(len(vals), max(3, (4 * len(vals) + 4) // 5))
+                if vals else 3)  # ≥80% 的 seed 都要离开基线
+        per_arm[g] = {
+            "val_mean": agg.get(g, {}).get("val_accuracy_mean"),
+            "above_random": bool(learned.get(g, False)),
+            "seeds_above_2x_baseline": n_ok,
+            "n_seeds": len(vals), "required_seeds": need,
+        }
+    valid = all(v["above_random"]
+                and v["seeds_above_2x_baseline"] >= v["required_seeds"]
+                for v in per_arm.values())
+    note = ("两臂均显著超过随机基线且多数 seed 都离开基线，装置有效，"
+            "可用于比较两种变换实现" if valid else
+            "至少一臂有多数 seed 停在随机基线附近，装置无效："
+            "本归档只能用于诊断配置，不得据此比较两臂优劣，"
+            "更不得写成「量子更好 / 无量子差异」")
+    report.setdefault("matched_control", {})["device_validity"] = {
+        "valid": valid, "per_arm": per_arm, "note": note,
+        "rule": "两臂各自 ≥80% 的 seed 的 val 需超过 2×随机基线(1/112)，"
+                "且二项检验显著，否则对照不产生信息",
+    }
+    if not valid and not str(report["interpretation"]["verdict"]).startswith("【装置无效"):
+        report["interpretation"]["verdict"] = (
+            "【装置无效，不得比较】" + report["interpretation"]["verdict"]
+        )
+    # 顺带把早期归档里的措辞与代码最新口径对齐（不改任何训练数据）
+    c = report.get("caveat", "").replace(
+        "三处人为不一致已移除", "两处人为不一致已移除（容量差为结构固有，见下）")
+    specs = report.get("matched_control", {}).get("specs", {})
+    has_norm = bool(specs) and all(s.get("readout_norm") for s in specs.values())
+    if has_norm and "LayerNorm" not in c:
+        c = c.replace("初始化/优化器",
+                      "两臂共用同一 LayerNorm 校准初始输出、初始化/优化器")
+        c = c.replace("、初始化/优化器", "、两臂共用同一 LayerNorm、初始化/优化器")
+    if not has_norm and "【本版未开启 readout_norm" not in c:
+        c += " 【本版未开启 readout_norm，初始输出尺度未校准，见 §14.6】"
+    report["caveat"] = c
+    if "【后注】本归档经" not in report["caveat"]:
+        report["caveat"] += (
+            " 【后注】本归档经 --annotate-from 补注装置有效性，训练数据未改动。")
+    return report
+
+
 CAVEAT = (
     "val 是未见的 (a,b) 组合而非未见数字，属于组合泛化，不是数值外推。"
     "答案位只在 112 个数字类上评估；输出头仍有 117 维但符号类不参与 loss。"
@@ -125,16 +221,19 @@ def _tensor_hash(t: torch.Tensor) -> str:
     return hashlib.sha256(t.detach().cpu().numpy().tobytes()).hexdigest()[:16]
 
 
-def build_model(group: str, seed: int, mode: str = "trainable_circular") -> RichQuantumLM:
+def build_model(group: str, seed: int, mode: str = "trainable_circular",
+                matched: bool = False) -> RichQuantumLM:
     """构建模型并按 ``mode`` 设置数字 embedding 的初始化 / 梯度开关。
 
     ``frozen_circular`` 与 ``trainable_circular`` 只差一个 requires_grad，
     初始权重逐位相同，因此两者的对比干净地隔离了「放开 embedding」这一件事。
+    ``matched=True`` 使用 MATCHED_GROUP_SPECS：两臂仅差 transform_type。
     """
     if mode not in EMBEDDING_MODES:
         raise ValueError(f"未知 embedding 模式 {mode!r}，可选 {EMBEDDING_MODES}")
     set_seed(seed)
-    spec = dict(GROUP_SPECS[group])
+    specs = MATCHED_GROUP_SPECS if matched else GROUP_SPECS
+    spec = dict(specs[group])
     spec.pop("n_qubits")
     spec.pop("n_layers")
     model = RichQuantumLM(vocab_size=VOCAB_SIZE, n_qubits=4, n_layers=1, **spec)
@@ -195,14 +294,39 @@ def run_one(task: tuple) -> dict:
     vx, vy = _subset(xva, yva, cfg["curve_n"])
 
     mode = cfg.get("embedding_mode", "trainable_circular")
-    model = build_model(group, seed, mode)
+    matched = bool(cfg.get("matched", False))
+    model = build_model(group, seed, mode, matched=matched)
     embed_init = model.embed.weight.detach().clone()
+    with torch.no_grad():
+        z0 = model.bottleneck_features(xtr[:16])
+        zn = model.readout_norm(z0) if model.readout_norm is not None else z0
+
+    def _stats(t: torch.Tensor) -> dict:
+        return {"mean": float(t.mean()), "std": float(t.std()),
+                "min": float(t.min()), "max": float(t.max())}
+
+    init_output_stats = {
+        "raw": _stats(z0), "into_head": _stats(zn), "shape": list(z0.shape),
+        "readout_norm": model.readout_norm is not None,
+    }
     init_hashes = {
         "embed": _tensor_hash(model.embed.weight),
         "causal_conv_weight": _tensor_hash(model.causal_encoder.causal_conv.weight),
         "head_weight": _tensor_hash(model.head[-1].weight)
         if hasattr(model.head, "__getitem__")
         else _tensor_hash(model.head.weight),
+        "out_scale": _tensor_hash(model.out_scale.detach()),
+    }
+    if model.readout_norm is not None:
+        init_hashes["readout_norm_weight"] = _tensor_hash(model.readout_norm.weight)
+    n_params_by_component = {
+        "embed": sum(p.numel() for p in model.embed.parameters()),
+        "causal_conv": sum(p.numel() for p in model.causal_encoder.causal_conv.parameters()),
+        "transform": sum(p.numel() for p in model.transform.parameters()),
+        "head": sum(p.numel() for p in model.head.parameters()),
+        "out_scale": model.out_scale.numel(),
+        "readout_norm": (sum(p.numel() for p in model.readout_norm.parameters())
+                         if model.readout_norm is not None else 0),
     }
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -253,6 +377,8 @@ def run_one(task: tuple) -> dict:
         "embedding_mode": mode,
         "n_params": n_params,
         "n_trainable_params": n_trainable,
+        "n_params_by_component": n_params_by_component,
+        "init_output_stats": init_output_stats,
         "embedding_trainable": bool(model.embed.weight.requires_grad),
         "embedding_drift_rms": embed_drift,
         "init_hashes": init_hashes,
@@ -365,6 +491,9 @@ def main() -> None:
                     help="frozen_circular / trainable_circular / trainable_random")
     ap.add_argument("--metrics-out", default="", help="覆盖归档 JSON 路径")
     ap.add_argument("--figure-out", default="", help="覆盖归档图路径")
+    ap.add_argument("--no-figure", action="store_true", help="只归档 JSON，不画图")
+    ap.add_argument("--matched", action="store_true",
+                    help="严格对照：两臂除 transform_type 外配置逐项相同（含硬断言）")
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--batch-size", type=int, default=32)
@@ -379,7 +508,19 @@ def main() -> None:
     ap.add_argument("--op", default="+")
     ap.add_argument("--redraw-from", default="",
                     help="从归档 JSON 重画对比图，不重跑训练")
+    ap.add_argument("--annotate-from", default="",
+                    help="给已有 matched 归档补注装置有效性/口径说明，不重跑训练")
     args = ap.parse_args()
+
+    if args.annotate_from:
+        p = Path(args.annotate_from)
+        rep = json.loads(p.read_text(encoding="utf-8"))
+        annotate_matched(rep)
+        p.write_text(json.dumps(rep, ensure_ascii=False, indent=2) + "\n",
+                     encoding="utf-8")
+        dv = rep["matched_control"]["device_validity"]
+        print(f"annotated {p} | device_valid={dv['valid']} | {dv['note']}")
+        return
 
     if args.redraw_from:
         report = json.loads(Path(args.redraw_from).read_text(encoding="utf-8"))
@@ -399,8 +540,22 @@ def main() -> None:
         )
         write = True
 
+    specs = MATCHED_GROUP_SPECS if args.matched else GROUP_SPECS
+    spec_check = (assert_matched(specs) if args.matched else
+                  {"label": "legacy", "differing_keys": [
+                      k for k in specs[GROUP_IDS[0]]
+                      if specs[GROUP_IDS[0]].get(k) != specs[GROUP_IDS[1]].get(k)],
+                   "other_keys_identical": False,
+                   "n_compared_keys": len(specs[GROUP_IDS[0]])})
+    if args.matched:
+        print(f"[matched] 两臂仅差 transform_type；其余 "
+              f"{spec_check['n_compared_keys'] - 1} 项已断言逐项相同", flush=True)
+
     mode = "trainable_random" if args.no_circular_embedding else args.embedding_mode
     cfg = {
+        "matched": bool(args.matched),
+        "group_specs": {g: dict(specs[g]) for g in GROUP_IDS},
+        "spec_check": spec_check,
         "embedding_mode": mode,
         "circular_embedding": mode != "trainable_random",
         "op": args.op,
@@ -440,9 +595,12 @@ def main() -> None:
     for s in cfg["seeds"]:
         pair = [r for r in runs if r["seed"] == s]
         h = {r["group"]: r["init_hashes"] for r in pair}
+        keys = ("embed", "causal_conv_weight", "head_weight")
+        if args.matched:
+            keys += ("out_scale", "readout_norm_weight")
         ok = all(
-            h[GROUP_IDS[0]][k] == h[GROUP_IDS[1]][k]
-            for k in ("embed", "causal_conv_weight", "head_weight")
+            h[GROUP_IDS[0]].get(k, "<missing>") == h[GROUP_IDS[1]].get(k, "<missing>")
+            for k in keys
         ) if len(h) == 2 else False
         weight_checks["per_seed"][str(s)] = {"passed": ok, "hashes": h}
         weight_checks["all_passed"] &= ok
@@ -548,6 +706,57 @@ def main() -> None:
         "wallclock_seconds_total": elapsed,
     }
 
+    if args.matched:
+        by_comp = {
+            g: {c: next(r["n_params_by_component"][c] for r in runs if r["group"] == g)
+                for c in ("embed", "causal_conv", "transform", "head",
+                          "out_scale", "readout_norm")}
+            for g in GROUP_IDS
+        }
+        init_stats = {
+            g: next(r["init_output_stats"] for r in runs if r["group"] == g)
+            for g in GROUP_IDS
+        }
+        report["matched_control"] = {
+            "specs": {g: dict(specs[g]) for g in GROUP_IDS},
+            "spec_check": spec_check,
+            "n_params_by_component": by_comp,
+            "transform_param_gap": abs(by_comp[GROUP_IDS[0]]["transform"]
+                                       - by_comp[GROUP_IDS[1]]["transform"]),
+            "initial_output_stats": init_stats,
+            "unresolved_structural_difference": (
+                "中间层参数量不等：量子线路 12 个旋转角 vs 经典 Linear(4,48) 240 个权重。"
+                "这是「4 维输入映射到 48 维读出」这一接口下两种参数化的结构固有差异，"
+                "无法在保持同输入/同输出维度的前提下消除；因此本对照测量的是"
+                "「两种变换实现」的差值，仍不是纯粹的量子层因果效应。"
+                "要消除它需做容量匹配扫描（量子臂 n_layers 递增 / 经典臂宽度递减）。"
+            ),
+        }
+        report["interpretation"]["verdict"] = (
+            f"严格对照（两臂仅差 transform_type，其余 {spec_check['n_compared_keys'] - 1} "
+            f"项断言相同）：量子 {agg[GROUP_IDS[0]]['val_accuracy_mean']:.4f}±"
+            f"{agg[GROUP_IDS[0]]['val_accuracy_std']:.4f} vs 经典 "
+            f"{agg[GROUP_IDS[1]]['val_accuracy_mean']:.4f}±"
+            f"{agg[GROUP_IDS[1]]['val_accuracy_std']:.4f}；"
+            f"Holm 后显著主检验 {n_holm_sig} 个。中间层容量 "
+            f"{by_comp[GROUP_IDS[0]]['transform']} vs "
+            f"{by_comp[GROUP_IDS[1]]['transform']} 的差异未消除，"
+            "结论仅适用于「两种变换实现」的比较，不得表述为量子层因果效应。"
+        )
+        report["caveat"] = (
+            "【严格对照】两臂 spec 除 transform_type 外逐项相同：scale 均为同初值可学习标量、"
+            "near_identity_init 均为 True（经典臂已实现对称小初始化）、两臂共用同一 "
+            "LayerNorm 校准初始输出尺度、初始化/优化器/lr/batch/步数/seed/切分/"
+            "评估口径全部一致。历史 GROUP_SPECS 的 scale 5.0 vs 1.0、"
+            "near_identity_init True vs False 两处人为不一致已移除。"
+            + CAVEAT + " " + report["matched_control"]["unresolved_structural_difference"]
+        )
+        verdict = report["interpretation"]["verdict"]
+
+    if args.matched:
+        annotate_matched(report)
+        verdict = report["interpretation"]["verdict"]
+
     print("\n=== probe/final summary ===")
     for g in GROUP_IDS:
         a = agg[g]
@@ -569,8 +778,11 @@ def main() -> None:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         metrics_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                                 encoding="utf-8")
-        _figure(report, figure_path)
-        print(f"  archived: {metrics_path}\n  figure:   {figure_path}")
+        if not args.no_figure:
+            _figure(report, figure_path)
+            print(f"  archived: {metrics_path}\n  figure:   {figure_path}")
+        else:
+            print(f"  archived: {metrics_path} (按 --no-figure 跳过出图)")
 
 
 if __name__ == "__main__":
