@@ -262,121 +262,222 @@ def build_verdict(conf: dict, steps: int, eval_every: int) -> tuple[str, dict]:
 
 
 def _figure(report: dict, path: Path) -> None:
+    """「加先验 vs 不加先验」主线图（全中文、结论式标题）。
+
+    2026-11-16 重做：上一版四个面板各说各话、缩写不解释、(d) 是一整块
+    等宽英文文字墙，而且**完全没有画出「加先验」的对照**，被用户指出看不懂。
+    现在四个面板围绕同一个问题：预置 sin/cos 圆编码是否等于跳过 grokking。
+    """
+    from matplotlib.patches import Rectangle
+
     pilot = report["stage1"]["per_condition"]
     conf = report["stage2"]["per_condition"]
-    fig, axes = plt.subplots(2, 2, figsize=(13.6, 8.8))
+    s1_steps = report["stage1"]["steps"]
+    s2_steps = report["stage2"]["steps"]
 
-    # (a) Stage 1 网格：最终 train acc（是否进记忆阶段）
-    ax = axes[0, 0]
-    rich = [(n, v) for n, v in pilot.items() if v["arch"] == "rich"]
-    rich.sort(key=lambda kv: kv[1]["final"]["train_accuracy"])
-    names = [n.replace("RICH/", "") for n, _ in rich]
-    vals = [v["final"]["train_accuracy"] for _, v in rich]
-    ys = np.arange(len(names))
-    ax.barh(ys, vals, color=["#1D9D75" if v >= PHASE_MEM_ACC else "#888780"
-                             for v in vals], alpha=0.85, height=0.75)
-    ax.axvline(PHASE_MEM_ACC, color="#D85A30", ls="--", lw=1.2,
-               label=f"memorization threshold {PHASE_MEM_ACC}")
-    ax.axvline(RANDOM_BASELINE_ACCURACY, color="#444444", ls=":", lw=1)
-    ax.set_yticks(ys[::3])
-    ax.set_yticklabels([names[i] for i in ys[::3]], fontsize=6)
-    ax.set_xlabel("final train accuracy (1-seed exploratory grid)")
-    ax.set_title(f"(a) can 'no prior' memorize? {report['stage1']['steps']} steps")
-    ax.legend(fontsize=7, loc="lower right")
-    ax.grid(alpha=0.25, axis="x")
+    # §12 的「加先验」两组，把用户真正问的对照画出来；缺归档时降级
+    prior: dict[str, tuple[float, float]] = {}
+    g12 = DOCS / "grokking_metrics.json"
+    if g12.exists():
+        try:
+            g = json.loads(g12.read_text(encoding="utf-8"))
+            for key in ("frozen", "trainable_circular"):
+                a = g["confirm"]["per_condition"][key]["aggregate"]
+                prior[key] = (float(a["val_accuracy_mean"]),
+                              float(a.get("val_accuracy_std", 0.0)))
+        except (KeyError, ValueError):
+            prior = {}
 
-    # 4 个条件（2 架构 x 2 wd）各自一个颜色；实线=train、虚线=val
-    CMAP = {"RICH|0": "#185FA5", "RICH|1": "#D85A30",
-            "MLP|0": "#1D9D75", "MLP|1": "#534AB7"}
+    def pick(prefix: str, wd: float | None = None) -> dict | None:
+        for k, v in conf.items():
+            if k.startswith(prefix) and (wd is None
+                                         or abs(v["cond"]["wd"] - wd) < 1e-9):
+                return v
+        return None
 
-    def _label(key: str, d: dict) -> tuple[str, str]:
-        tag = "RICH" if key.startswith("RICH") else "MLP"
-        wd = d["cond"]["wd"]
-        ckey = f"{tag}|{int(wd > 0)}"
-        return f"{tag} wd={wd:g}", CMAP.get(ckey, "#888780")
+    rich0 = pick("RICH", 0.0) or pick("RICH")
+    rich1 = pick("RICH", 1.0)
+    mlp1 = pick("MLP", 1.0) or pick("MLP")
 
-    # (b) Stage 2 曲线：两架构同超参、同步数
-    ax = axes[0, 1]
-    for key, d in conf.items():
-        if not d["curves"]:
-            continue
-        curves = d["curves"]
-        steps = [c["step"] for c in curves[0]]
-        lbl, col = _label(key, d)
-        for metric, style in (("train_acc", "-"), ("val_acc", "--")):
-            arr = np.array([[c[metric] for c in cu] for cu in curves])
-            ax.plot(steps, arr.mean(0), style, color=col, lw=1.7,
-                    label=lbl if metric == "train_acc" else None)
-    ax.set_xscale("log")
-    ax.set_ylim(-0.02, 1.02)
-    ax.set_xlabel("training steps (log)")
-    ax.set_ylabel("accuracy")
-    ax.set_title(f"(b) matched hyperparameters @ {report['stage2']['steps']} steps")
-    ax.legend(fontsize=7, loc="center left", ncol=1, framealpha=0.85,
-              title="solid=train, dashed=val", title_fontsize=7)
-    ax.grid(alpha=0.25)
+    C_PRIOR, C_PRIOR_L = "#E07A2F", "#EFAE72"
+    C_RICH, C_RICH_L = "#2F6FB5", "#86A9D6"
+    C_CTRL, C_INK, C_MUTE = "#1D9D75", "#20242B", "#6B7280"
 
-    # (c) 傅里叶 progress measure
-    ax = axes[1, 0]
-    for key, d in conf.items():
-        if not d["curves"]:
-            continue
-        curves = d["curves"]
-        steps = [c["step"] for c in curves[0]]
-        arr = np.array([[c["r2_k1"] for c in cu] for cu in curves])
-        lbl, col = _label(key, d)
-        ax.plot(steps, arr.mean(0), color=col, lw=1.7, label=lbl)
-    ax.set_xscale("log")
-    ax.set_ylim(-0.3, 1.05)
-    ax.set_xlabel("training steps (log)")
-    ax.set_ylabel("R² linear decode of sin/cos (k=1)")
-    ax.set_title("(c) Fourier progress measure")
-    ax.legend(fontsize=7, loc="upper right")
-    ax.grid(alpha=0.25)
+    def mean_curve(d: dict, key: str) -> tuple[list[int], np.ndarray]:
+        cu = d["curves"]
+        return ([c["step"] for c in cu[0]],
+                np.asarray([[c[key] for c in x] for x in cu],
+                           dtype=float).mean(0))
 
-    # (d) 相变判定摘要
-    ax = axes[1, 1]
-    ax.axis("off")
-    # 纯 ASCII：DejaVu Sans Mono 无中文字形，写中文会出方框并刷警告。
-    lines = ["pre-registered primary question:",
-             "  does 'no prior' grok at %d steps?" % report["stage2"]["steps"],
-             ""]
-    for key, d in conf.items():
-        a = d["aggregate"]
-        n = len(d["curves"])
-        tag = key.split("/")[0]
-        wd = d["cond"]["wd"]
-        lines += [
-            "%s wd=%-4g  grok %d/%d | memorized %d | generalized %d" %
-            (tag, wd, a["n_grokking_seeds"], n, a["n_memorized_seeds"],
-             a["n_generalized_seeds"]),
-            "    final train %.4f  val %.4f" %
-            (a["train_accuracy_mean"], a["val_accuracy_mean"]),
+    with plt.rc_context({"font.sans-serif": ["Microsoft YaHei", "SimHei",
+                                             "Noto Sans SC", "DejaVu Sans"],
+                         "axes.unicode_minus": False}):
+        fig, axes = plt.subplots(2, 2, figsize=(14.4, 9.8))
+        fig.subplots_adjust(left=0.145, right=0.972, top=0.862, bottom=0.118,
+                            hspace=0.46, wspace=0.26)
+        fig.suptitle("加先验 = 跳过 grokking，不加先验 = grokking 起跑线",
+                     fontsize=18, fontweight="bold", color=C_INK, y=0.972)
+        fig.text(0.5, 0.923,
+                 "模 112 加法 · 唯一差别：数字 token 的 embedding 是否预置 sin/cos 圆编码"
+                 "（数值均来自 5 seed 重复实验）",
+                 ha="center", fontsize=10.5, color="#555555")
+
+        # ---------- (a) 核心对照：验证准确率 ----------
+        ax = axes[0, 0]
+        rows: list[tuple[str, float, float, str, str]] = []
+        if prior:
+            rows += [
+                ("加先验 · 冻结圆编码", *prior["frozen"], "§12 长训练", C_PRIOR),
+                ("加先验 · 可训练圆编码", *prior["trainable_circular"],
+                 "§12 长训练", C_PRIOR_L),
+            ]
+        for label, d, col in (("不加先验 · 本仓库 wd=0", rich0, C_RICH),
+                              ("不加先验 · 本仓库 wd=1", rich1, C_RICH_L),
+                              ("不加先验 · 二次 MLP 正对照", mlp1, C_CTRL)):
+            if d is None:
+                continue
+            a = d["aggregate"]
+            rows.append((label, float(a["val_accuracy_mean"]),
+                         float(a.get("val_accuracy_std", 0.0)),
+                         f"§13 · {s2_steps:,} 步", col))
+        ys = np.arange(len(rows))[::-1]
+        for y, (label, mean, std, _tag, col) in zip(ys, rows):
+            ax.barh(y, mean, xerr=std, color=col, alpha=0.92, height=0.6,
+                    error_kw=dict(ecolor="#555555", capsize=0, lw=1))
+            # 数字抬到柱中线上方：误差棒横线正好在中线上，同高会被读成负号
+            ax.text(mean + 0.025, y + 0.26, f"{mean:.3f}", va="bottom",
+                    fontsize=9.2, fontweight="bold", color=col,
+                    bbox=dict(fc="white", ec="white", alpha=1.0, pad=0.8))
+        ax.axvline(RANDOM_BASELINE_ACCURACY, color="#9AA0A6", ls=":", lw=1.2,
+                   label=f"随机猜 1/112 = {RANDOM_BASELINE_ACCURACY:.3f}")
+        ax.set_yticks(ys)
+        ax.set_yticklabels([r[0] for r in rows], fontsize=9)
+        ax.set_xlim(0, 1.16)
+        ax.set_xlabel("验证集 top-1 准确率（5 seed 均值 ± 标准差）", fontsize=9.5)
+        ax.set_title("(a) 预置圆编码立刻能算；本仓库从零学 10 万步还没泛化",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.legend(fontsize=7.8, loc="upper right", framealpha=0.9)
+        ax.grid(alpha=0.22, axis="x")
+
+        # ---------- (b) 不加先验的学习曲线 ----------
+        ax = axes[0, 1]
+        # 右侧留白直接标注每条线，不用图例（图例会压住贴在 0 附近的验证线）
+        ax.set_xscale("log")
+        ax.set_xlim(1800, 600000)
+        ax.set_ylim(-0.03, 1.10)
+        ax.set_xticks([2000, 10000, 100000])
+        ax.set_xticklabels(["2 千步", "1 万步", "10 万步"])
+        if rich0 is not None and rich0["curves"]:
+            st, rt = mean_curve(rich0, "train_acc")
+            _, rv = mean_curve(rich0, "val_acc")
+            a0 = rich0["aggregate"]  # 用全量评估口径，与 (a)(d) 的数字一致
+            ax.plot(st, rt, color=C_RICH, lw=2.3)
+            ax.plot(st, rv, color=C_RICH, lw=2.3, ls="--")
+            ax.text(1.3e5, rt[-1], f"本仓库 · 训练 {a0['train_accuracy_mean']:.2f}",
+                    va="center", fontsize=8.6, color=C_RICH, fontweight="bold")
+            ax.text(1.3e5, 0.055, f"本仓库 · 验证 {a0['val_accuracy_mean']:.3f}",
+                    va="center", fontsize=8.6, color=C_RICH)
+        if mlp1 is not None and mlp1["curves"]:
+            st, mv = mean_curve(mlp1, "val_acc")
+            a1 = mlp1["aggregate"]
+            ax.plot(st, mv, color=C_CTRL, lw=2.1, ls="-.")
+            ax.text(1.3e5, mv[-1], f"二次 MLP · 验证 {a1['val_accuracy_mean']:.2f}",
+                    va="center", fontsize=8.6, color=C_CTRL, fontweight="bold")
+        ax.axhline(RANDOM_BASELINE_ACCURACY, color="#9AA0A6", ls=":", lw=1.2)
+        ax.text(2300, RANDOM_BASELINE_ACCURACY + 0.04, "随机猜 0.009",
+                fontsize=7.5, color="#888888")
+        ax.set_xlabel("训练步数（对数轴）", fontsize=9.5)
+        ax.set_ylabel("准确率", fontsize=9.5)
+        ax.set_title("(b) 训练准确率在爬、验证准确率不动 —— 相变还没发生",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.text(0.025, 0.56, "记忆中：\n训练在爬，验证不动",
+                transform=ax.transAxes, fontsize=9, color=C_RICH,
+                linespacing=1.6,
+                bbox=dict(fc="#EAF1FA", ec="#B9CFE8", alpha=0.95,
+                          boxstyle="round,pad=0.45"))
+        ax.grid(alpha=0.22)
+
+        # ---------- (c) 学习率扫描：上一轮「架构瓶颈」为何是误判 ----------
+        ax = axes[1, 0]
+        scan = sorted((float(v["lr"]), float(v["final"]["train_accuracy"]))
+                      for v in pilot.values()
+                      if v["arch"] == "rich"
+                      and abs(float(v["val_fraction"]) - 0.8) < 1e-9
+                      and abs(float(v["wd"])) < 1e-9)
+        if scan:
+            xs = [s[0] for s in scan]
+            vs = [s[1] for s in scan]
+            ax.plot(xs, vs, "-o", color=C_INK, lw=1.8, ms=6, zorder=2)
+            bi = int(np.argmax(vs))
+            ax.plot([xs[bi]], [vs[bi]], "o", color=C_CTRL, ms=12, zorder=3)
+            ax.annotate(f"lr={xs[bi]:g}（最佳）\n训练准确率 {vs[bi]:.3f}",
+                        (xs[bi], vs[bi]), xytext=(0, 16),
+                        textcoords="offset points", ha="center", fontsize=8.6,
+                        color="#137A5A", fontweight="bold")
+            rounded = [round(x, 6) for x in xs]
+            if 0.015 in rounded:
+                j = rounded.index(0.015)
+                ax.plot([xs[j]], [vs[j]], "o", color="#D0342C", ms=10, zorder=3)
+                ax.annotate("上一轮用 lr=0.015\n几乎学不动（0.013）",
+                            xy=(xs[j], vs[j]), xytext=(0.78, 0.55),
+                            textcoords="axes fraction", ha="center",
+                            fontsize=8.5, color="#D0342C",
+                            bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.5),
+                            arrowprops=dict(arrowstyle="->", color="#D0342C",
+                                            lw=1.1))
+        ax.set_xscale("log")
+        ax.set_ylim(-0.015, 0.40)
+        ax.set_xlabel("学习率（对数轴）", fontsize=9.5)
+        ax.set_ylabel("训练准确率", fontsize=9.5)
+        ax.set_title("(c) 同一架构、只改学习率：0.013 → 0.307",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.grid(alpha=0.22)
+
+        # ---------- (d) 结论卡 ----------
+        ax = axes[1, 1]
+        ax.axis("off")
+        ax.set_title("(d) 这轮能说什么 / 不能说什么",
+                     fontsize=11.5, fontweight="bold", loc="left", pad=9)
+        ax.add_patch(Rectangle((0.005, 0.035), 0.99, 0.895,
+                               transform=ax.transAxes,
+                               facecolor="#F7F8FA", edgecolor="#D5D9DE",
+                               lw=1.1))
+        r0 = rich0["aggregate"] if rich0 else {}
+        m1 = mlp1["aggregate"] if mlp1 else {}
+        cards = [
+            ("[已证实] 加先验：把 grokking 终点的圆编码直接喂进去，不用 grok 就会算",
+             "#B35C18"),
+            (f"[已证实] 不加先验：5 seed × {s2_steps:,} 步，训练 "
+             f"{r0.get('train_accuracy_mean', 0):.3f} / 验证 "
+             f"{r0.get('val_accuracy_mean', 0):.3f}，仍在记忆阶段", C_RICH),
+            ("[已撤回] §12「架构缺少乘法交互」：学习率混淆 + 四项对照不同", "#C0392B"),
+            ("[不能说] 本仓库模型永远不会 grok —— 连记忆都没完成", "#C0392B"),
+            ("[注 意] 每 2000 步采样会漏掉 1000–1500 步的突发跳变，"
+             "严格相变判定本轮不可用", C_MUTE),
+            (f"[装 置] 同超参二次 MLP 验证 {m1.get('val_accuracy_mean', 0):.3f}，"
+             "说明这套条件下任务确实可 grok", "#137A5A"),
         ]
-    s = report.get("stage2", {}).get("summary")
-    if s:
-        r, m = s["rich"], s["mlp"]
-        lines += ["", "rich: %d/%d generalized, %d/%d memorized" %
-                  (r["gen"], r["runs"], r["mem"], r["runs"]),
-                  "mlp : %d/%d generalized, %d/%d memorized" %
-                  (m["gen"], m["runs"], m["mem"], m["runs"])]
-    lines += ["", "thresholds: mem>=%.2f gen>=%.2f jump>=%.2f" %
-              (PHASE_MEM_ACC, PHASE_GEN_ACC,
-               report["stage2"]["phase_thresholds"]["jump"]),
-              "NOTE: eval_every=%d misses abrupt jumps before" %
-              report["stage2"]["eval_every"],
-              "      step 2000; device validity is shown by",
-              "      val acc + the 500-step stage1 pilot.", "",
-              "full verdict: docs/grokking_no_prior.json"]
-    ax.text(0.01, 0.98, "\n".join(lines), transform=ax.transAxes,
-            va="top", ha="left", fontsize=7.6, family="monospace",
-            bbox=dict(fc="#f7f7f5", ec="#cccccc", alpha=0.9))
-    ax.set_title("(d) phase-transition summary")
+        for i, (txt, col) in enumerate(cards):
+            ax.text(0.028, 0.865 - i * 0.128, txt, transform=ax.transAxes,
+                    fontsize=9.0, color=col, va="center", linespacing=1.5)
+        ax.text(0.028, 0.075,
+                "数据：docs/grokking_no_prior.json · 两架构同 lr / wd / 数据量 / "
+                "seed / 切分 · 量子臂未参与本轮",
+                transform=ax.transAxes, fontsize=7.5, color=C_MUTE, va="center")
 
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+        # 加先验两组来自 §12（不同 lr / 步数），只用于展示现象；
+        # 结论性比较始终是 §13 内同超参的 wd 对照，写清楚避免误读。
+        fig.text(0.5, 0.020,
+                 "注：橙色（加先验）来自 §12 长训练，蓝色 / 绿色（不加先验）来自 §13（10 万步），"
+                 "超参不完全一致，仅用于展示现象；因果结论以 §13 的同超参对照为准。\n"
+                 f"(c) 为 1-seed 探索网格（同切分 / wd=0 / {s1_steps:,} 步），"
+                 "各学习率均未达到记忆阈值 0.95。",
+                 ha="center", va="bottom", fontsize=7.8, color="#888888",
+                 linespacing=1.6)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
 
 
 def main() -> None:
