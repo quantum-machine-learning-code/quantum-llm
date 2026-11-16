@@ -28,26 +28,43 @@
 > 且量子臂只有 2500 步 / 2 seed，与经典臂 40000 步 / 5 seed 不可比；
 > 课题一评估只取最后位置 logits（`answer_logits`），并未做自回归生成。
 >
-> **已修**：`--matched` 严格对照模式，`MATCHED_GROUP_SPECS` 由
-> `assert_matched()` 在代码层断言两臂除 `transform_type` 外逐项相同
-> （`scale` 统一为同初值可学习标量、小初始化策略两臂对称、两臂共用同一
-> `LayerNorm` 校准初始输出尺度、初始权重哈希含 `out_scale` /
-> `readout_norm_weight` 逐项校验）；归档 `docs/matched_metrics.json`。
-> 中间还发现「字段一致 ≠ 行为一致」：未加归一化时两臂初始输出标准差
-> 0.385 vs 0.024，经典臂 3/5 seed 学不动（过程归档
-> `docs/matched_v1_no_norm_metrics.json`，见 REVIEW §14.6）。
-> **仍未消除**：12 vs 240 的参数量差异是「4 维输入 → 48 维读出」接口下
-> 两种参数化的结构固有差异，已写入归档 `unresolved_structural_difference`，
-> 需容量匹配扫描（量子臂 `n_layers` 递增 / 经典臂宽度递减）才能处理。
-> **实测结果（REVIEW §14.6）**：两轮 `--matched` **都未通过装置有效性检查**
-> —— 未加归一化时经典臂 3/5 seed 停在随机基线（量子 `0.1769` vs 经典
-> `0.0476`，差值主要来自经典臂优化失败）；加上同一 `LayerNorm` 校准后
-> 两臂一起退化到 `0.0062`。因此 `docs/matched_metrics.json` 与
-> `docs/matched_v1_no_norm_metrics.json` 目前**只能用于诊断配置，
-> 不得用于比较两臂优劣**，更不能写成「量子更好」或「无差异」。
-> 这反过来说明历史那组「两臂都学会组合泛化」的数字依赖只给量子臂调过的
-> `scale=5.0`：把补丁去掉后装置就塌了。真正弄一致还需两臂各自调参至
-> 都通过门槛 + 容量匹配扫描，见 §14.6。
+> **已修**：`--matched` 严格对照模式，由 `assert_matched()` 在代码层断言两臂
+> 除 `transform_type` 外 **13 项逐项相同**（同一初值的可学习 `out_scale`、
+> 两臂都不加小初始化补丁、不启用增益不等的 `LayerNorm`），并由
+> `annotate_matched()` 在报差值前强制检查装置有效性。
+>
+> **装置诊断（[REVIEW §14.7](docs/REVIEW.md)，归档
+> [`docs/matched_calibration.json`](docs/matched_calibration.json)）**：
+> v1 的「小初始化补丁」本身让两臂初始输出 std 差 **16 倍**；v2 的
+> `LayerNorm` 对两臂有效增益 `2.57× / 40.31×`，**不是对称操作**，两臂一起
+> 退化到 `0.0062`；v3 两臂都退回各自框架默认初始化、无补丁无新增层，
+> std `0.258 / 0.286`（`0.9×`）终于对齐，但统一 `lr=0.015` 下经典臂仍有
+> 4/5 seed 卡在随机基线。三版归档 (`matched_v1_no_norm_metrics.json` /
+> `matched_metrics.json` / `matched_v3_metrics.json`) 的
+> `device_validity.valid` 均为 `false`，**只能用于诊断配置，不得比较两臂优劣**。
+>
+> **共同可行域（不是各自挑最优）**：公开记录的小预算网格
+> （`experiments/matched_calibration.py --grid`）发现经典臂学不学动主要由
+> **lr** 决定（`0.003` 下 4 个 scale 全部 2/2 学动，`0.015/0.03` 几乎全塌）；
+> **正式 5 seed × 2000 步（[`docs/matched_v4_metrics.json`](docs/matched_v4_metrics.json)）**：
+> 量子 `0.3251±0.0464`、经典 `0.2767±0.0917`，两臂各 **5/5 seed** 越过
+> `2×1/112` 门槛，`device_validity.valid = true` —— **装置第一次有效**。
+> 主指标 val acc 配对 Δ `+0.0485`，CI `[-0.0677, +0.1647]` 跨 0
+> （`p=0.311`）；Holm 后唯一显著项是 `generalization_gap`
+> （`+0.0156`，量子臂训练–验证间隙更大），**不是准确率优势**。
+> 容量差 12 vs 240 与「量子层不参与序列依赖」仍未消除，所以这里得到的
+> 只是「两种变换实现都真的学动了」，**不能表述为量子层因果效应**。
+>
+> **容量匹配（[§14.8](docs/REVIEW.md)）**：量子 `n_layers=20` 时 240 参数
+> = 经典 240（单步 `0.3865 s`，2000 步约 `0.21 h/seed`）；但层数同时改变
+> 线路深度 / 表达力 / 梯度尺度，参数量相等 **不等于唯一自变量已隔离**。
+> 归档 [`docs/capacity_matched_pilot.json`](docs/capacity_matched_pilot.json)。
+>
+> **更靠前的问题（[§15](docs/REVIEW.md)）**：量子层逐位置独立、不承载跨步
+> 状态，课题一还是一次性分类 —— 再干净的对照也只测到「两种 pointwise
+> 非线性」。已落地 L1 量子循环原型 `qml_lab/recurrent.py` 与
+> [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md)；
+> 本节所有归档统一标为「经典瓶颈基线」。
 
 ## 课题一：模 112 加法（$\mathbb{Z}_{112}$，2026-11-13）
 
@@ -355,7 +372,8 @@ quantum-llm/
 │   ├── arithmetic.py               # 课题一：117-token 词表、Z_112 运算、穷举/disjoint 切分、答案位评估与循环编码
 │   ├── corpus_independent.py       # 两份语料 (independent / synthetic) + 重叠率与分布散度工具
 │   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
-│   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM
+│   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM（L0，逐位置变换）
+│   ├── recurrent.py                # L1 架构原型：测量反馈型量子循环 + 同接口经典 RNN 替身
 │   ├── train.py                    # 自回归训练循环、全语料确定性评估 (evaluate_lm) 与贪心解码
 │   └── viz.py                      # 训练曲线与诊断图绘制
 ├── experiments/
@@ -367,10 +385,13 @@ quantum-llm/
 │   ├── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
 │   ├── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
 │   ├── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
-│   └── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
-├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
+│   ├── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
+│   ├── matched_calibration.py      # 严格对照的装置诊断 + 公开记录的最小调参网格
+│   └── capacity_matched.py         # 容量匹配 pilot：n_layers 1→20 的参数量 / 初始行为 / 单步成本
+├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、L1 架构 P1–P4）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7–13 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融 / grokking / 修正复验）
+│   ├── REVIEW.md                   # 完整方法学审查（§7–15：语料 / 加法 / embedding / grokking / 对照口径 / 架构资格）
+│   ├── ARCHITECTURE_PROPOSAL.md    # L0/L1/L2 架构层级、P1–P4 判据、消融设计与成本风险
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
@@ -378,6 +399,12 @@ quantum-llm/
 │   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
 │   ├── addition_metrics.json       # 课题一：模 112 加法 5-seed 受控对照归档
 │   ├── embedding_ablation_metrics.json # 课题一补：三模式 embedding 对照归档
+│   ├── matched_v1_no_norm_metrics.json # 装置 v1（字段一致 / 无归一化，无效）
+│   ├── matched_metrics.json        # 装置 v2（LayerNorm，无效）
+│   ├── matched_v3_metrics.json     # 装置 v3（默认初始化 / lr=0.015，无效）
+│   ├── matched_v4_metrics.json     # 装置 v4（共同可行域 lr=0.003，以 device_validity 为准）
+│   ├── matched_calibration.json    # 四套装置的初始行为诊断 + 两阶段标定网格
+│   ├── capacity_matched_pilot.json # 容量匹配 pilot（n_layers 1/5/10/20）
 │   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
 │   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
 │   ├── grokking_no_prior_pilot.json # 修正轮：60 条件 1-seed 同超参网格（探索性）
@@ -443,6 +470,39 @@ python3 -m venv .venv
 结论只由 `stage2` 的 5-seed × $10^5$ 步给出。
 
 `--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
+
+### 1e. 严格对照、装置标定与 L1 架构原型
+
+```bash
+# 严格对照（代码层断言两臂 13 项相同）；--annotate-from 给旧归档补装置有效性判据
+.venv/bin/python experiments/train_addition.py --matched --lr 0.003 --scale-init 5 \
+    --workers 4 --metrics-out docs/matched_v4_metrics.json --no-figure
+.venv/bin/python experiments/train_addition.py --annotate-from docs/matched_metrics.json
+
+# 装置诊断 + 汇总四版归档 + 中文结论图（不重跑训练）
+.venv/bin/python experiments/matched_calibration.py
+# 公开记录的最小调参网格：先跑便宜的经典臂定位可行域，再验证两臂
+.venv/bin/python experiments/matched_calibration.py --grid --arms classical --grid-workers 2
+.venv/bin/python experiments/matched_calibration.py --grid --arms both \
+    --scale-inits 1,5 --lrs 0.003 --grid-workers 2
+
+# 容量匹配 pilot（单进程，只测参数量 / 初始行为 / 单步成本）
+.venv/bin/python experiments/capacity_matched.py --layers 1,5,10,20
+```
+
+L1 原型只验证结构（P1–P4），**不做性能对比**：
+
+```python
+from qml_lab.recurrent import QuantumRecurrentLM
+m = QuantumRecurrentLM(vocab_size=31, n_qubits=4)
+logits = m(idx)                       # (B,T,V)，每步把上一步测量期望重上传
+out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
+```
+
+契约测试 `python tests/smoke_test.py` 已包含 `check_recurrent_architecture()`。
+本机可用内存常在 8–9 GB / 31 GB，每个 worker 约 420 MB：**正式训练
+`workers=4`、标定/诊断 `workers=2`、容量 pilot 单进程，且不要同时叠加两个
+多进程任务**；统一设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
 
 ### 2. 复现受控基线（`train_llm.py`）与完整 5-Seed 诊断（`diagnose_llm.py`）
 

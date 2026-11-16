@@ -33,10 +33,15 @@ def _build_head(n_in: int, vocab_size: int, head: str = "linear", hidden: int = 
     raise ValueError(f"未知分类头 {head!r}，可选 'linear' / 'mlp'")
 
 
-def _set_scale(module: nn.Module, scale: float | str = 1.0) -> None:
-    """设置读出缩放系数以缓解测量导致的 logit 收缩（measurement-induced logit contraction）。"""
+def _set_scale(module: nn.Module, scale: float | str = 1.0,
+               init: float = 5.0) -> None:
+    """设置读出缩放系数以缓解测量导致的 logit 收缩。
+
+    ``scale="learnable"`` 时两臂都拿到同一初值的可训练标量（初值由
+    ``init`` 指定，供装置标定扫描使用），避免「只给量子臂放大」的历史补丁。
+    """
     if isinstance(scale, str) and scale.lower() == "learnable":
-        module.out_scale = nn.Parameter(torch.tensor(5.0, dtype=torch.float32))
+        module.out_scale = nn.Parameter(torch.tensor(float(init), dtype=torch.float32))
     else:
         module.register_buffer(
             "out_scale", torch.tensor(float(scale), dtype=torch.float32)
@@ -208,6 +213,7 @@ class RichQuantumLM(TinyLM):
         near_identity_init: bool = False,
         init_std: float = 0.05,
         scale: float | str = 5.0,
+        scale_init: float = 5.0,
         head: str = "linear",
         hidden: int = 32,
         classical_width: int | None = None,
@@ -310,4 +316,4 @@ class RichQuantumLM(TinyLM):
         self.readout_norm = (
             nn.LayerNorm(self.readout_dim) if readout_norm else None
         )
-        _set_scale(self, scale)
+        _set_scale(self, scale, scale_init)

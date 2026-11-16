@@ -109,20 +109,31 @@ GROUP_SPECS = {
 }
 
 # --------------------------------------------------------------------------- #
-# 严格对照配置（2026-11-16）：两臂 spec 除 transform_type 外逐项完全相同。
+# 严格对照配置（2026-11-16，v3）：两臂 spec 除 transform_type 外逐项完全相同。
 #
 # 历史 GROUP_SPECS 混了三个变量：transform_type、scale(5.0 vs 1.0)、
 # near_identity_init(True vs False)，且两臂中间层容量 12 vs 240；
 # 因此历史「量子 vs 经典」差值不能归因于量子层。这里消除所有人为引入的
 # 不一致，并把无法消除的结构性容量差异显式记录、显式声明为限制。
+#
+# v1（ni=True, norm=False）：字段一致但行为失衡。量子/经典初始输出 std
+#   0.390 / 0.024（16×），经典臂 3/5 seed 卡在随机基线。
+# v2（ni=True, norm=True）：想用 LayerNorm 校准，结果两臂一起退化到 0.0062。
+#   实测 LayerNorm 沿 48 维标准化时，对量子臂有效增益 2.5×、对经典臂 40×，
+#   根本不是对称操作（见 docs/matched_calibration.json 的装置诊断）。
+# v3（本版，ni=False, norm=False）：两臂都退回各自框架的默认初始化，
+#   不加任何只在单边生效的补丁。实测初始特征 std 0.258 / 0.286（差 10%）、
+#   成对距离 0.687 / 0.908，是三者中唯一量级接近的起跑线；也不新增层或参数。
 # --------------------------------------------------------------------------- #
 MATCHED_GROUP_SPECS = {
     g: {
         **GROUP_SPECS["add_q_rich48"],
         "transform_type": t,
-        "scale": "learnable",       # 两臂同初值 5.0、同为可训练标量，不再一边放大一边不放大
-        "near_identity_init": True, # 两臂都做对称的小初始化（经典臂分支见 models.py）
-        "readout_norm": True,       # 两臂同一 LayerNorm，校准初始输出尺度（见 §14.6）
+        "scale": "learnable",       # 两臂同初值、同为可训练标量，不再一边放大一边不放大
+        "scale_init": 5.0,          # 可由 --scale-init 标定，两臂始终同值
+        "near_identity_init": False,  # 两臂都不加小初始化补丁（v3 的关键修复）
+        "readout_norm": False,       # 不再用增益不等的 LayerNorm（v2 已证伪）
+        "n_layers": 1,              # 容量轴；两臂同值，量子臂按语义使用
     }
     for g, t in zip(GROUP_IDS, ("quantum", "classical"))
 }
@@ -191,12 +202,18 @@ def annotate_matched(report: dict) -> dict:
         "三处人为不一致已移除", "两处人为不一致已移除（容量差为结构固有，见下）")
     specs = report.get("matched_control", {}).get("specs", {})
     has_norm = bool(specs) and all(s.get("readout_norm") for s in specs.values())
-    if has_norm and "LayerNorm" not in c:
-        c = c.replace("初始化/优化器",
-                      "两臂共用同一 LayerNorm 校准初始输出、初始化/优化器")
-        c = c.replace("、初始化/优化器", "、两臂共用同一 LayerNorm、初始化/优化器")
-    if not has_norm and "【本版未开启 readout_norm" not in c:
-        c += " 【本版未开启 readout_norm，初始输出尺度未校准，见 §14.6】"
+    has_ni = bool(specs) and all(s.get("near_identity_init") for s in specs.values())
+    if has_ni and not has_norm:
+        device_note = ("【v1 装置】两臂小初始化补丁造成初始输出 std 0.390/0.024（16×），"
+                       "字段一致但行为失衡，经典臂多数 seed 学不动")
+    elif has_ni and has_norm:
+        device_note = ("【v2 装置】LayerNorm 沿 48 维标准化对两臂有效增益约 2.5×/40×，"
+                       "不是对称操作，两臂一起退化到随机基线")
+    else:
+        device_note = ("【v3 装置】两臂均用各自框架默认初始化、不加校准补丁，"
+                       "初始特征 std 0.258/0.286 量级接近")
+    if "【v1 装置】" not in c and "【v2 装置】" not in c and "【v3 装置】" not in c:
+        c += " " + device_note
     report["caveat"] = c
     if "【后注】本归档经" not in report["caveat"]:
         report["caveat"] += (
@@ -222,21 +239,27 @@ def _tensor_hash(t: torch.Tensor) -> str:
 
 
 def build_model(group: str, seed: int, mode: str = "trainable_circular",
-                matched: bool = False) -> RichQuantumLM:
+                matched: bool = False,
+                spec_overrides: dict | None = None) -> RichQuantumLM:
     """构建模型并按 ``mode`` 设置数字 embedding 的初始化 / 梯度开关。
 
     ``frozen_circular`` 与 ``trainable_circular`` 只差一个 requires_grad，
     初始权重逐位相同，因此两者的对比干净地隔离了「放开 embedding」这一件事。
     ``matched=True`` 使用 MATCHED_GROUP_SPECS：两臂仅差 transform_type。
+    ``spec_overrides`` 供装置标定 / 容量扫描注入**两臂同值**的配置覆盖，
+    调用方须自行保证覆盖项对两臂一致（见 matched_calibration.py）。
     """
     if mode not in EMBEDDING_MODES:
         raise ValueError(f"未知 embedding 模式 {mode!r}，可选 {EMBEDDING_MODES}")
     set_seed(seed)
     specs = MATCHED_GROUP_SPECS if matched else GROUP_SPECS
     spec = dict(specs[group])
-    spec.pop("n_qubits")
-    spec.pop("n_layers")
-    model = RichQuantumLM(vocab_size=VOCAB_SIZE, n_qubits=4, n_layers=1, **spec)
+    if spec_overrides:
+        spec.update(spec_overrides)
+    n_qubits = int(spec.pop("n_qubits", 4))
+    n_layers = int(spec.pop("n_layers", 1))
+    model = RichQuantumLM(vocab_size=VOCAB_SIZE, n_qubits=n_qubits,
+                          n_layers=n_layers, **spec)
     if mode in ("frozen_circular", "trainable_circular"):
         circular_init(model)
     if mode == "frozen_circular":
@@ -295,7 +318,8 @@ def run_one(task: tuple) -> dict:
 
     mode = cfg.get("embedding_mode", "trainable_circular")
     matched = bool(cfg.get("matched", False))
-    model = build_model(group, seed, mode, matched=matched)
+    model = build_model(group, seed, mode, matched=matched,
+                        spec_overrides=cfg.get("spec_overrides"))
     embed_init = model.embed.weight.detach().clone()
     with torch.no_grad():
         z0 = model.bottleneck_features(xtr[:16])
@@ -506,6 +530,14 @@ def main() -> None:
     ap.add_argument("--split-mode", default="holdout_pairs",
                     choices=("holdout_pairs", "holdout_operand"))
     ap.add_argument("--op", default="+")
+    ap.add_argument("--scale-init", type=float, default=None,
+                    help="覆盖两臂共同的可学习 out_scale 初值（装置标定用）")
+    ap.add_argument("--n-layers", type=int, default=None,
+                    help="覆盖两臂共同的 n_layers（容量匹配扫描用；量子臂按语义使用）")
+    ap.add_argument("--near-identity-init", action="store_true",
+                    help="复现 v1：两臂都开小初始化补丁（诊断用，非默认）")
+    ap.add_argument("--readout-norm", action="store_true",
+                    help="复现 v2：两臂都开 LayerNorm（诊断用，非默认）")
     ap.add_argument("--redraw-from", default="",
                     help="从归档 JSON 重画对比图，不重跑训练")
     ap.add_argument("--annotate-from", default="",
@@ -540,7 +572,20 @@ def main() -> None:
         )
         write = True
 
+    overrides: dict = {}
+    if args.scale_init is not None:
+        overrides["scale_init"] = float(args.scale_init)
+    if args.n_layers is not None:
+        overrides["n_layers"] = int(args.n_layers)
+    if args.near_identity_init:
+        overrides["near_identity_init"] = True
+    if args.readout_norm:
+        overrides["readout_norm"] = True
+
     specs = MATCHED_GROUP_SPECS if args.matched else GROUP_SPECS
+    if overrides and args.matched:
+        # 覆盖项对两臂同值，assert_matched 仍只应看到 transform_type 一个差异
+        specs = {g: {**specs[g], **overrides} for g in GROUP_IDS}
     spec_check = (assert_matched(specs) if args.matched else
                   {"label": "legacy", "differing_keys": [
                       k for k in specs[GROUP_IDS[0]]
@@ -556,6 +601,7 @@ def main() -> None:
         "matched": bool(args.matched),
         "group_specs": {g: dict(specs[g]) for g in GROUP_IDS},
         "spec_check": spec_check,
+        "spec_overrides": overrides,
         "embedding_mode": mode,
         "circular_embedding": mode != "trainable_random",
         "op": args.op,
@@ -743,12 +789,21 @@ def main() -> None:
             f"{by_comp[GROUP_IDS[1]]['transform']} 的差异未消除，"
             "结论仅适用于「两种变换实现」的比较，不得表述为量子层因果效应。"
         )
+        s0 = specs[GROUP_IDS[0]]
+        scale_desc = (f"scale 为同初值 {s0.get('scale_init', 5.0):g} 的可学习标量"
+                      if s0.get("scale") == "learnable"
+                      else f"scale 固定 {s0.get('scale')}")
+        init_desc = ("两臂均开小初始化补丁" if s0.get("near_identity_init")
+                     else "两臂均用各自框架默认初始化（不加小初始化补丁）")
+        norm_desc = ("两臂共用同一 LayerNorm" if s0.get("readout_norm")
+                     else "不启用 LayerNorm")
         report["caveat"] = (
-            "【严格对照】两臂 spec 除 transform_type 外逐项相同：scale 均为同初值可学习标量、"
-            "near_identity_init 均为 True（经典臂已实现对称小初始化）、两臂共用同一 "
-            "LayerNorm 校准初始输出尺度、初始化/优化器/lr/batch/步数/seed/切分/"
+            f"【严格对照】两臂 spec 除 transform_type 外逐项相同：{scale_desc}、"
+            f"{init_desc}、{norm_desc}、初始化/优化器/lr/batch/步数/seed/切分/"
             "评估口径全部一致。历史 GROUP_SPECS 的 scale 5.0 vs 1.0、"
-            "near_identity_init True vs False 两处人为不一致已移除。"
+            "near_identity_init True vs False 两处人为不一致已移除；"
+            "v1/v2 装置（小初始化补丁 / LayerNorm）已证伪，见 "
+            "docs/matched_calibration.json。"
             + CAVEAT + " " + report["matched_control"]["unresolved_structural_difference"]
         )
         verdict = report["interpretation"]["verdict"]

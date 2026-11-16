@@ -542,6 +542,80 @@ def check_grokking_no_prior() -> None:
     )
 
 
+def check_recurrent_architecture() -> None:
+    """L1 架构契约：量子态参与序列依赖（前向/反向/状态/因果/生成）。
+
+    见 docs/ARCHITECTURE_PROPOSAL.md 的 P1–P4。这里只验证结构，不比较性能。
+    """
+    from qml_lab.recurrent import (
+        ClassicalRecurrentLM,
+        QuantumRecurrentLM,
+        make_recurrent_qnode,
+    )
+
+    set_seed(0)
+    V, B, T, Q = 31, 2, 4, 4
+    idx = torch.randint(0, V, (B, T))
+
+    # QNode 契约：批量输出 (B,Q)，梯度覆盖输入 / 上一步状态 / 线路权重
+    qnode = make_recurrent_qnode(Q)
+    x = torch.rand(B, Q, requires_grad=True)
+    s = torch.rand(B, Q, requires_grad=True)
+    w = torch.rand(1, Q, 3, requires_grad=True)
+    out = torch.stack(list(qnode(x, s, w)), dim=-1)
+    assert out.shape == (B, Q) and _finite_all(out.detach().numpy())
+    out.pow(2).sum().backward()
+    assert x.grad is not None and s.grad is not None and w.grad is not None, (
+        "量子循环 QNode 必须对输入、上一步状态、线路权重都可微"
+    )
+    with torch.no_grad():
+        out0 = torch.stack(list(qnode(x, torch.zeros_like(s), w)), dim=-1)
+    assert (out.detach() - out0).abs().mean() > 1e-3, (
+        "上一步状态置零后输出应改变，否则状态反馈没有进入线路（P2）"
+    )
+
+    for cls in (QuantumRecurrentLM, ClassicalRecurrentLM):
+        set_seed(0)
+        model = cls(V, n_qubits=Q) if cls is QuantumRecurrentLM else cls(V, state_dim=Q)
+        model.train()
+        logits = model(idx)
+        assert logits.shape == (B, T, V), f"{cls.__name__} 输出应为 (B,T,V)"
+        assert _finite_all(logits.detach().numpy())
+
+        # P3 严格因果：改掉位置 >=2 的 token 不能影响位置 0/1 的 logits
+        idx2 = idx.clone()
+        idx2[:, 2:] = 0
+        with torch.no_grad():
+            logits2 = model(idx2)
+        assert torch.allclose(logits.detach()[:, :2], logits2[:, :2], atol=1e-6), (
+            f"{cls.__name__} 非因果：未来 token 影响了过去位置的 logits"
+        )
+
+        # 反向传播覆盖输入编码与循环层（量子臂还要覆盖线路权重）
+        loss = torch.nn.functional.cross_entropy(
+            logits[:, :-1].reshape(-1, V), idx[:, 1:].reshape(-1)
+        )
+        loss.backward()
+        assert model.embed.weight.grad is not None
+        if cls is QuantumRecurrentLM:
+            assert model.weights.grad is not None, "量子线路权重必须收到跨步梯度"
+            assert model.input_proj.weight.grad is not None
+
+        # P4 逐步生成：前缀保持不变、长度正确
+        prefix = idx[:, :2]
+        gen = model.generate(prefix, n_new=3)
+        assert gen.shape == (B, 5) and torch.equal(gen[:, :2], prefix)
+
+    # 状态消融：同权重下 feedback=False 应改变输出（模型确实有状态通路）
+    set_seed(0)
+    m_on = QuantumRecurrentLM(V, n_qubits=Q).eval()
+    m_off = QuantumRecurrentLM(V, n_qubits=Q, feedback=False).eval()
+    with torch.no_grad():
+        m_off.load_state_dict(m_on.state_dict())
+        d = (m_on(idx) - m_off(idx)).abs().mean()
+    assert d > 1e-3, f"feedback 消融应改变输出，实测 {d:.6f}"
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -567,6 +641,7 @@ test_arithmetic_task = check_arithmetic_task
 test_embedding_modes = check_embedding_modes
 test_grokking_scan = check_grokking_scan
 test_grokking_no_prior = check_grokking_no_prior
+test_recurrent_architecture = check_recurrent_architecture
 test_quick_cli = check_quick_cli
 
 
@@ -580,6 +655,7 @@ def main() -> None:
     check_grokking_no_prior()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
+    check_recurrent_architecture()
     check_lm()
     check_quick_cli()
     print("SMOKE OK")

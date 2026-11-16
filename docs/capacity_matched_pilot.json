@@ -1,0 +1,104 @@
+{
+  "task": "capacity-matched pilot: transform parameter count as a measured axis",
+  "per_layer": [
+    {
+      "n_layers": 1,
+      "per_arm": {
+        "add_q_rich48": {
+          "transform_params": 12,
+          "total_params": 10230,
+          "initial_output_std": 0.25867733359336853,
+          "initial_output_median_feature_std": 0.062087103724479675,
+          "seconds_per_step": 0.12173060000350233,
+          "construction_seconds": 0.6375118999858387
+        },
+        "add_classical": {
+          "transform_params": 240,
+          "total_params": 10458,
+          "initial_output_std": 0.2848661243915558,
+          "initial_output_median_feature_std": 0.09617030620574951,
+          "seconds_per_step": 0.0030931999936001375,
+          "construction_seconds": 0.03148009997676127
+        }
+      },
+      "transform_param_gap": 228,
+      "transform_param_ratio": 0.05
+    },
+    {
+      "n_layers": 5,
+      "per_arm": {
+        "add_q_rich48": {
+          "transform_params": 60,
+          "total_params": 10278,
+          "initial_output_std": 0.2718343436717987,
+          "initial_output_median_feature_std": 0.056384701281785965,
+          "seconds_per_step": 0.18305140000302345,
+          "construction_seconds": 0.8762197000032756
+        },
+        "add_classical": {
+          "transform_params": 240,
+          "total_params": 10458,
+          "initial_output_std": 0.2848661243915558,
+          "initial_output_median_feature_std": 0.09617030620574951,
+          "seconds_per_step": 0.0024053000088315457,
+          "construction_seconds": 0.024893400026485324
+        }
+      },
+      "transform_param_gap": 180,
+      "transform_param_ratio": 0.25
+    },
+    {
+      "n_layers": 10,
+      "per_arm": {
+        "add_q_rich48": {
+          "transform_params": 120,
+          "total_params": 10338,
+          "initial_output_std": 0.24009659886360168,
+          "initial_output_median_feature_std": 0.06473158299922943,
+          "seconds_per_step": 0.23358830000506714,
+          "construction_seconds": 1.2671594000130426
+        },
+        "add_classical": {
+          "transform_params": 240,
+          "total_params": 10458,
+          "initial_output_std": 0.2848661243915558,
+          "initial_output_median_feature_std": 0.09617030620574951,
+          "seconds_per_step": 0.003008400002727285,
+          "construction_seconds": 0.030410399980610237
+        }
+      },
+      "transform_param_gap": 120,
+      "transform_param_ratio": 0.5
+    },
+    {
+      "n_layers": 20,
+      "per_arm": {
+        "add_q_rich48": {
+          "transform_params": 240,
+          "total_params": 10458,
+          "initial_output_std": 0.238967165350914,
+          "initial_output_median_feature_std": 0.06299037486314774,
+          "seconds_per_step": 0.3865248499932932,
+          "construction_seconds": 1.770886700018309
+        },
+        "add_classical": {
+          "transform_params": 240,
+          "total_params": 10458,
+          "initial_output_std": 0.2848661243915558,
+          "initial_output_median_feature_std": 0.09617030620574951,
+          "seconds_per_step": 0.00311360000341665,
+          "construction_seconds": 0.029915699997218326
+        }
+      },
+      "transform_param_gap": 0,
+      "transform_param_ratio": 1.0
+    }
+  ],
+  "classical_params_fixed": 240,
+  "quantum_params_per_layer": 12,
+  "exact_match_layer": 20,
+  "timing_steps": 4,
+  "short_train_steps": 0,
+  "random_baseline_accuracy": 0.008928571428571428,
+  "caveat": "提高量子层数同时改变线路深度、表达力与梯度尺度；参数量相等不等于唯一自变量已隔离。本 pilot 只把容量差显式测量出来，未做多 seed 训练，不得据此比较两臂准确率。量子层仍是逐位置变换，不参与序列依赖。"
+}

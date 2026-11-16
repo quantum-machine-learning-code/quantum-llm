@@ -34,21 +34,44 @@ At current hardware and state-vector simulator limits ($2^n$ state dimension), b
 > entirely classical — see [`docs/REVIEW.md` §14](docs/REVIEW.md) (Chinese).
 >
 > **Fixed**: `--matched` mode, where `assert_matched()` hard-asserts that the two
-> arm specs are identical except `transform_type` (shared learnable scale,
-> symmetric small initialization, shared `LayerNorm` for initial-output
-> calibration); results in `docs/matched_metrics.json`.
-> **Still unresolved**: the 12 vs 240 parameter gap is structural for a 4→48
-> interface and needs a capacity-matched sweep. `--matched` therefore compares
-> two transformation implementations, not a quantum-layer causal effect.
+> arm specs are identical except `transform_type` (13 shared fields: same learnable
+> scale, default initialization on both arms, no asymmetric `LayerNorm`),
+> and `annotate_matched()` blocks any comparison unless both arms leave the
+> random baseline.
 >
-> **Measured outcome (§14.6)**: both `--matched` runs **fail the device-validity
-> check**. Without normalization the classical arm stays at the random baseline
-> in 3/5 seeds; with a shared `LayerNorm` both arms collapse to `0.0062`.
-> The archives `docs/matched_metrics.json` and
-> `docs/matched_v1_no_norm_metrics.json` are therefore **configuration
-> diagnostics only** and must not be used to rank the two arms. This in turn
-> shows the historical "both arms learned" numbers depended on a `scale=5.0`
-> tuned for the quantum arm alone.
+> **Device diagnosis (§14.7, `docs/matched_calibration.json`)**: the "symmetric"
+> small-initialization patch itself produced a **16×** initial-output std gap;
+> a shared `LayerNorm` amplified the two arms by `2.57× / 40.31×` (not a symmetric
+> operation) and collapsed both to `0.0062`. v3 removes all patches and aligns
+> the initial std (`0.258 / 0.286`, 0.9×), but at `lr=0.015` the classical arm
+> still fails in 4/5 seeds. All three archives have `device_validity.valid=false`
+> and are **configuration diagnostics only**.
+>
+> **Jointly feasible region, not per-arm tuning**: a recorded small-budget grid
+> shows the classical arm is governed by `lr` (all four scales learn at `0.003`,
+> nearly all collapse at `0.015/0.03`). At `lr=0.003, scale_init=5.0` both arms
+> pass the threshold in 2/2 pilot seeds. The formal 5-seed × 2000-step run
+> (`docs/matched_v4_metrics.json`) is the **first run that passes the device
+> check** (`device_validity.valid=true`, 5/5 seeds per arm): quantum
+> `0.3251±0.0464`, classical `0.2767±0.0917`. The primary endpoint
+> `val_accuracy` has paired Δ `+0.0485`, CI `[-0.0677,+0.1647]`, `p=0.311`;
+> the only Holm-significant endpoint is `generalization_gap` (`+0.0156`,
+> i.e. a larger train–val gap on the quantum arm), **not an accuracy gain**.
+> With the 12 vs 240 capacity gap and the position-wise quantum layer still
+> unresolved, this is evidence that both implementations learn — not a
+> quantum-layer causal effect.
+>
+> **Capacity sweep (§14.8)**: at `n_layers=20` the quantum arm has 240 parameters,
+> exactly matching the classical 240 (`0.3865 s/step`). Matching parameter counts
+> still changes circuit depth, expressivity and gradient scale, so it does not
+> isolate a single variable. See `docs/capacity_matched_pilot.json`.
+>
+> **Prior constraint (§15)**: the quantum layer is position-wise and carries no
+> cross-step state; Task 1 is one-shot classification. Even a perfectly matched
+> control only compares two pointwise non-linearities. An L1 measurement-feedback
+> quantum recurrent prototype is now in `qml_lab/recurrent.py`, with the L0/L1/L2
+> roadmap and P1–P4 criteria in `docs/ARCHITECTURE_PROPOSAL.md`. All archives in
+> this section are labelled **classical-bottleneck baselines**.
 
 ## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
 
