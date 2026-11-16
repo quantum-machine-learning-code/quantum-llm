@@ -488,6 +488,60 @@ def check_grokking_scan() -> None:
     )
 
 
+def check_grokking_no_prior() -> None:
+    """第 13 节契约：「不加先验 = grokking」修正实验的两架构必须完全同超参，
+    网格必须覆盖上一轮缺失的 lr=0.003 / wd=1.0 / 少训练数据条件，
+    且 --quick 全链路可跑通。
+    """
+    exp_dir = str(ROOT / "experiments")
+    if exp_dir not in sys.path:
+        sys.path.insert(0, exp_dir)
+    from grokking_no_prior import LR_GRID, VF_GRID, WD_GRID, _grid, _select
+
+    grid = _grid(10, 5)
+    rich = {c["name"].replace("RICH/", ""): c for c in grid if c["arch"] == "rich"}
+    mlp = {c["name"].replace("MLP/", ""): c for c in grid
+           if c["arch"] == "quad_mlp"}
+    assert set(rich) == set(mlp) and len(rich) > 0
+    for tag in rich:
+        a, b = rich[tag], mlp[tag]
+        for k in ("lr", "wd", "val_fraction", "steps", "eval_every",
+                  "mode", "opt", "group", "embed_lr_scale", "batch_size"):
+            if k in a:
+                assert a[k] == b[k], f"{tag} 的 {k} 未对齐，架构对照不干净"
+        assert a["mode"] == "trainable_random", "修正实验只能用不加先验组"
+    assert 0.003 in LR_GRID and 1.0 in WD_GRID and 0.8 in VF_GRID, (
+        "网格必须覆盖上一轮正对照用过的低 lr / 强 wd / 少训练数据条件"
+    )
+    # 探索性预选不能把 MLP 条件当成 rich 条件选出来
+    pilot = {
+        "RICH/a": {"arch": "rich", "lr": 0.003, "wd": 1.0,
+                   "val_fraction": 0.8,
+                   "final": {"train_accuracy": 0.99, "val_accuracy": 0.99},
+                   "phase": {"grokking_observed": True,
+                             "delayed_generalization": True,
+                             "max_val_accuracy": 0.99,
+                             "final_train_accuracy": 0.99}},
+        "MLP/a": {"arch": "quad_mlp", "lr": 0.003, "wd": 1.0,
+                  "val_fraction": 0.8,
+                  "final": {"train_accuracy": 1.0, "val_accuracy": 1.0},
+                  "phase": {"grokking_observed": True,
+                            "delayed_generalization": True,
+                            "max_val_accuracy": 1.0,
+                            "final_train_accuracy": 1.0}},
+    }
+    selected = _select(pilot, 1)
+    assert len(selected) == 1 and selected[0]["name"] == "RICH/a"
+
+    cmd = [sys.executable, str(ROOT / "experiments" / "grokking_no_prior.py"),
+           "--quick"]
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
+                          check=False)
+    assert proc.returncode == 0, (
+        f"grokking_no_prior.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+    )
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -512,6 +566,7 @@ test_synthetic_corpus = check_synthetic_corpus
 test_arithmetic_task = check_arithmetic_task
 test_embedding_modes = check_embedding_modes
 test_grokking_scan = check_grokking_scan
+test_grokking_no_prior = check_grokking_no_prior
 test_quick_cli = check_quick_cli
 
 
@@ -522,6 +577,7 @@ def main() -> None:
     check_arithmetic_task()
     check_embedding_modes()
     check_grokking_scan()
+    check_grokking_no_prior()
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_lm()

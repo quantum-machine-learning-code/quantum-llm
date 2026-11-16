@@ -110,13 +110,42 @@ progress measure。
 | 二次 MLP 正对照（20% 训练数据 + `wd=1.0`） | 5000 | **`0.9944 ± 0.0006`** | **5/5** |
 | 二次 MLP 正对照（同 0.2 切分） | 5000 | `0.9983 ± 0.0002` | 0/5 |
 
-**结论**：grokking 复现了，但**不在本仓库模型里**。正对照在 1000 步完成记忆
-（train 1.00）、1500 步突发泛化（val 0.99，单步跳变 `+0.667`）；同一任务、
-同一随机 embedding、同一零重叠切分下，把本仓库预算拉到 20 倍并加 weight
-decay 仍 0/5 出现相变。**同切分架构差距 `+0.9910` CI `[+0.9877,+0.9943]`，
-3 个主检验 Holm 后唯一显著项**。所以「再训练久一点就会 grok」不成立，
-瓶颈是**架构缺少乘法交互 / 傅里叶表示能力**，不是训练预算或梯度摊薄。
-另外：冻结在 40000 步后仍未反转（`0.4207` vs `0.2736`，`p=0.041` 但 Holm
+**⚠ 上面这段第 12 节的结论已撤回，见第 13 节。** 正确的对应关系是：
+**加循环角度先验 = 把 grokking 最终学到的 sin/cos 表征直接注入，等于跳过
+grokking；不加先验 = grokking 起跑线，得靠长训练自己长出这个表征。**
+第 12 节把问题换成了「另造一个能 grok 的二次 MLP，据此宣称本仓库架构不
+行」，且那组对照的随机 embedding **连记忆阶段都没进入**（40000 步后
+train acc `0.0288`），两架构的 lr / wd / 训练数据占比 / 步数四项还全不同，
+因此 `+0.9910` 不是干净的架构效应，不能推出「瓶颈是架构」。
+修正实验：`experiments/grokking_no_prior.py`（两架构完全同超参、$10^5$ 步）。
+
+**修正复验结果（[REVIEW.md 第 13 节](docs/REVIEW.md)、
+[归档](docs/grokking_no_prior.json)、[pilot](docs/grokking_no_prior_pilot.json)、
+[图](docs/figures/grokking_no_prior.png)）**：先跑 60 条件 1-seed 网格
+（$5\ \text{lr} \times 3\ \text{wd} \times 2\ \text{vf} \times 2$ 架构 × 1.2 万步），
+再挑两组共享 `lr=0.003 / vf=0.8`、只差 `wd` 的条件做 5 seed × $10^5$ 步确认：
+
+![不加先验 grokking 修正实验：优化网格、同超参曲线、傅里叶 progress 与相变摘要](docs/figures/grokking_no_prior.png)
+
+| 同超参条件 | train acc | val acc | 完成记忆 | 完成泛化 |
+| --- | --- | --- | --- | --- |
+| `RICH wd=0` | `0.6565 ± 0.0469` | `0.0076 ± 0.0005` | 0/5 | 0/5 |
+| `RICH wd=1` | `0.1200 ± 0.0203` | `0.0884 ± 0.0166` | 0/5 | 0/5 |
+| `MLP wd=0` | `1.0000` | `0.2679 ± 0.0160` | **5/5** | 0/5 |
+| `MLP wd=1` | `0.9987 ± 0.0006` | **`0.9918 ± 0.0030`** | **5/5** | **5/5** |
+
+`RICH wd=0` 的 train 从 `0.09` 一路爬到 `0.66`、val 全程 `≈0.01` ——
+**这就是不加先验 grokking 的「记忆中、尚未泛化」阶段，10 万步连第一步
+都没走完**。最硬的一条反证：同一个架构、同样不加先验，只把 `lr` 从
+`0.015` 降到 `0.003`，train acc 就从 `0.009` 变成 `0.66`，所以上一轮的
+「架构瓶颈」至少一大半是超参没调。**现在仍不能下架构结论**：grokking
+要求先记忆，rich 连 `train≥0.95` 都没到，0 相变是必然结果、不构成证据；
+要谈架构必须先把 rich 训练到 `train≈1.0` 再看 val 是否跳变。
+（stage2 `eval_every=2000` 会漏掉正对照在 1000–1500 步的突发跳变，
+故严格 `grokking_observed` 全 0/5 是采样伪影；装置有效性由 `val 0.9918`
+与 stage1 `eval_every=500` 的 `grok=True` 证明。）
+
+**以下为第 12 节的附带结论与边界，仍然有效**：冻结在 40000 步后仍未反转（`0.4207` vs `0.2736`，`p=0.041` 但 Holm
 后 `p=0.082` 不显著），而前 4 维 sin/cos 相位保持度恒 `1.000` vs 降到
 `0.614`、与准确率相关（探索性 `r=0.69`），解释了第 11 节的机制。
 量子臂实测 `0.1264 s/步` vs 经典 `0.0038 s/步`（**33.6×**），
@@ -277,10 +306,11 @@ quantum-llm/
 │   ├── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
 │   ├── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
 │   ├── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
-│   └── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
+│   ├── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
+│   └── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
 ├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐断言）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（第 7–12 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融 / grokking）
+│   ├── REVIEW.md                   # 完整方法学审查（第 7–13 节：语料 / 独立重跑 / 稳健性 / 模 112 加法 / embedding 消融 / grokking / 修正复验）
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
 │   ├── corpus_audit.json           # 旧语料重叠统计归档
@@ -290,7 +320,9 @@ quantum-llm/
 │   ├── embedding_ablation_metrics.json # 课题一补：三模式 embedding 对照归档
 │   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
 │   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
-│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, grokking_scan.png, ...)
+│   ├── grokking_no_prior_pilot.json # 修正轮：60 条件 1-seed 同超参网格（探索性）
+│   ├── grokking_no_prior.json      # 修正轮：5-seed × 1e5 步确认归档
+│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, grokking_scan.png, grokking_no_prior.png, ...)
 └── results/                        # 运行产物（gitignore）
 ```
 
@@ -336,6 +368,19 @@ python3 -m venv .venv
 
 长训练默认 `workers=6`、经典臂 40000 步；本机内存紧张时把 `--workers` 调小，
 并显式设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
+
+### 1d. 复现「不加先验 = grokking」修正实验
+
+```bash
+.venv/bin/python experiments/grokking_no_prior.py --quick               # 冒烟
+.venv/bin/python experiments/grokking_no_prior.py --stage1-only --workers 6 --stage1-steps 12000
+.venv/bin/python experiments/grokking_no_prior.py --stage2-from docs/grokking_no_prior_pilot.json --workers 6 --stage2-steps 100000
+.venv/bin/python experiments/grokking_no_prior.py --redraw-from docs/grokking_no_prior.json
+```
+
+两架构共用同一套 `lr / wd / val_fraction / batch / 步数 / seed / 切分`，唯一差别是
+架构；二次 MLP 只作装置校验。`stage1` 是 1-seed 探索（60 条件 × 12000 步），
+结论只由 `stage2` 的 5-seed × $10^5$ 步给出。
 
 `--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
 
