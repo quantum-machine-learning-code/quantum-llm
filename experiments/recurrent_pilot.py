@@ -652,8 +652,8 @@ def _figure(report: dict, path: Path) -> None:
                  "关反馈后前缀敏感度与跨步梯度严格归零；但延迟回忆上量子两臂仍近随机基线。",
                  fontsize=9.3, color="#555555", ha="left")
         fig.text(0.012, 0.018,
-                 "不报准确率差值 / 配对 CI / 显著性；经典臂只作装置正对照，不比较优劣。"
-                 "状态仍是经典数值（L1 测量-反馈），量子态跨步延续是 L2，未实现。",
+                 "数字为 2 seed 均值示意（独立重复单位 n=2，未报 SD/CI）；延迟回忆不是 held-out 泛化。"
+                 "状态仍是经典数值（L1 测量-反馈），L2 隐量子态延续未实现。",
                  fontsize=8.9, color="#555555", ha="left")
         fig.subplots_adjust(left=0.078, right=0.975, top=0.875, bottom=0.115,
                             hspace=0.46, wspace=0.27)

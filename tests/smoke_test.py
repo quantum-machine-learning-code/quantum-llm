@@ -688,6 +688,31 @@ def check_recurrent_pilot() -> None:
     assert report["corpus"]["val_context_k4_coverage"] < 0.5
 
 
+def check_state_channel_probe() -> None:
+    """L1 状态通道解析诊断的契约：Z 读出下 RZ 相位在恒等线路里不可观测。
+
+    只测结构性质，不训练、不写归档；防止以后改电路时悄悄改变这条解释。
+    """
+    from experiments.state_channel_probe import run_probe
+
+    report = run_probe(n_inputs=4)
+    rows = {row["init_std"]: row for row in report["measurements"]}
+    zero = rows[0.0]["configs"]
+    assert zero["RZ_feedback_Z_readout"]["mean_abs_grad"] < 1e-6, (
+        "权重为 0 时 RZ 相位应无法被 Z 读出观测（解析预期）"
+    )
+    assert zero["RZ_feedback_X_readout"]["mean_abs_grad"] > 1e-3, (
+        "换到 X 读出后相位应可见，否则诊断本身失效"
+    )
+    default = rows[0.05]["configs"]
+    assert (default["RZ_feedback_Z_readout"]["mean_abs_grad"]
+            < 0.05 * default["RY_feedback_Z_readout"]["mean_abs_grad"]), (
+        "默认初始化下 RZ+Z 应显著弱于 RY+Z，否则『状态通路被压制』的解释失效"
+    )
+    forbidden = " ".join(report["claims_forbidden"])
+    assert "量子循环不能记忆" in forbidden and "换读出基就能" in forbidden
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -715,6 +740,7 @@ test_grokking_scan = check_grokking_scan
 test_grokking_no_prior = check_grokking_no_prior
 test_recurrent_architecture = check_recurrent_architecture
 test_recurrent_pilot = check_recurrent_pilot
+test_state_channel_probe = check_state_channel_probe
 test_quick_cli = check_quick_cli
 
 
@@ -730,6 +756,7 @@ def main() -> None:
     check_causal_strictness_and_seed_control()
     check_recurrent_architecture()
     check_recurrent_pilot()
+    check_state_channel_probe()
     check_lm()
     check_quick_cli()
     print("SMOKE OK")

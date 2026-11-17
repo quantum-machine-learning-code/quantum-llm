@@ -17,6 +17,12 @@ All notable changes to `quantum-llm` will be documented in this file.
 - Made the peak working-set number reproducible: `--probe-memory` rechecks it in a fresh process (334.8 MB vs 332.7 MB at run time, 2.1 MB baseline drift), and `runtime.memory_probe` records both readings plus the reproduce command. No hand-written metric patches remain.
 - `--recompute-from` / `--redraw-from` now honour `--out`, so a redraw cannot silently overwrite the committed figure; removed quick-mode smoke artifacts from `results/` (gitignored and regenerable).
 
+### Skill-based audit (all 5 research skills + project guardrails)
+- **New mechanistic diagnostic** `experiments/state_channel_probe.py` + `docs/state_channel_probe.json`: analytic/numeric gradient check on the L1 QNode. With a zero-weight entangler, `RZ` phase feedback is invisible to `expval(Z)` (`2.29e-9`) while `expval(X)` sees it (`4.13e-2`); at the default `init_std=0.05` the `RZ+Z` channel is ~163x weaker than `RY+Z` (`5.20e-3` vs `8.48e-1`). This is a **testable candidate cause** for the zero recall gain, not a training result; section 16's "functional state use unproven" is unchanged. `check_state_channel_probe()` locks three structural properties as contracts.
+- **Statistical disclosure** (`reporting_scope` in `docs/recurrent_pilot.json`, README 1f, REVIEW section 16): independent replicate = seed (n=2); all tabulated numbers are 2-seed illustrative means without SD/CI; delayed recall has only k=4 distinct input sequences with full train/eval input overlap (not held-out generalisation); 32 samples/seed are not 32 independent replicates.
+- Chinese figure footer now states the n=2 / no-CI / non-held-out limits (redrawn with `--redraw-from`, no retraining).
+- Next-step priority changed: a single-variable A/B on readout basis / state gate comes before longer training.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added

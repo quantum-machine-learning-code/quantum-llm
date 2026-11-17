@@ -86,6 +86,15 @@ At current hardware and state-vector simulator limits ($2^n$ state dimension), b
 > Peak memory is reproducible with `--probe-memory` (332.7 MB at run time,
 > 334.8 MB recheck). See `docs/recurrent_pilot.json` and
 > `docs/figures/recurrent_pilot.png`; README section 1f has the full table.
+>
+> **Skill-based audit (2026-11-17)**: `state_channel_probe.py` shows L1 `RZ`
+> phase feedback is invisible to `expval(Z)` at zero entangler weight and ~163x
+> weaker than an `RY` feedback at the default `init_std=0.05` — a **testable
+> candidate cause** for the zero recall gain, not a training result and not
+> evidence that quantum recurrence cannot memorise. All pilot numbers are
+> 2-seed illustrative means (independent unit = seed, no SD/CI); delayed recall
+> has only 4 distinct inputs and is not held-out generalisation. Next step: a
+> single-variable readout/state-gate A/B before longer training.
 
 ## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
 

@@ -850,5 +850,23 @@
       "模 112 加法答案只有 1 个 token，不适合检验序列依赖，本 pilot 未用它。",
       "仍是 default.qubit 解析状态向量，无 shots / 噪声 / 真机。"
     ]
+  },
+  "reporting_scope": {
+    "independent_replicate_unit": "seed",
+    "n_independent_replicates": 2,
+    "char_eval": "固定 seed=2026 的前 4 个 val batch（每 batch 16 序列）；各臂各 seed 都从同一 seed 重建生成器，评估样本相同",
+    "delayed_recall": {
+      "distinct_input_sequences": 4,
+      "samples_per_seed": 32,
+      "train_eval_input_overlap": "全重叠：合成任务只有 k=4 种 [target][pad×4][cue] 序列，评估不是 held-out 泛化，只检验拟合/记忆通路",
+      "eval_seed": 99999,
+      "train_seed_base": 2000
+    },
+    "uncertainty": "表格数值为 2 seed 均值；未报 SD / CI，不做显著性检验；全部为示意值，不是结论性统计",
+    "pseudoreplication_note": "独立重复单位是 seed（n=2），不是 batch / token / 序列；4 个 val batch 或 32 个回忆样本不能当作 n=32 的独立重复"
+  },
+  "related_diagnostics": {
+    "state_channel_probe": "docs/state_channel_probe.json",
+    "note": "解析梯度诊断：RZ 相位反馈 + Z 读出在默认初始化下被结构性压制。是「功能有效性未证明」的候选机制，不是训练结论，不改变本归档 verdict。"
   }
 }

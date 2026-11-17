@@ -390,10 +390,11 @@ quantum-llm/
 │   ├── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
 │   ├── matched_calibration.py      # 严格对照的装置诊断 + 公开记录的最小调参网格
 │   ├── capacity_matched.py         # 容量匹配 pilot：n_layers 1→20 的参数量 / 初始行为 / 单步成本
-│   └── recurrent_pilot.py          # L1 短预算 A0/A1 pilot：P1–P4 契约、状态消融、延迟回忆、计时与内存
-├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、L1 架构 P1–P4 与 pilot 口径）
+│   ├── recurrent_pilot.py          # L1 短预算 A0/A1 pilot：P1–P4 契约、状态消融、延迟回忆、计时与内存
+│   └── state_channel_probe.py      # L1 状态通道解析诊断：RZ 相位 + Z 读出的梯度压制（无训练）
+├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、P1–P4、pilot 口径、状态通道）
 ├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（§7–15：语料 / 加法 / embedding / grokking / 对照口径 / 架构资格）
+│   ├── REVIEW.md                   # 完整方法学审查（§7–16：语料 / 加法 / embedding / grokking / 对照口径 / 架构资格 / L1 pilot）
 │   ├── ARCHITECTURE_PROPOSAL.md    # L0/L1/L2 架构层级、P1–P4 判据、消融设计与成本风险
 │   ├── DEV_NOTES.md                # 本机环境与复现备注
 │   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
@@ -408,7 +409,8 @@ quantum-llm/
 │   ├── matched_v4_metrics.json     # 装置 v4（共同可行域 lr=0.003，以 device_validity 为准）
 │   ├── matched_calibration.json    # 四套装置的初始行为诊断 + 两阶段标定网格
 │   ├── capacity_matched_pilot.json # 容量匹配 pilot（n_layers 1/5/10/20）
-│   ├── recurrent_pilot.json        # L1 短预算 pilot：P1–P4 / 状态消融 / 延迟回忆 / 成本与内存
+│   ├── recurrent_pilot.json        # L1 短预算 pilot：P1–P4 / 状态消融 / 延迟回忆 / 成本与内存 / reporting_scope
+│   ├── state_channel_probe.json    # L1 状态通道解析梯度诊断（候选机制，非训练结论）
 │   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
 │   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
 │   ├── grokking_no_prior_pilot.json # 修正轮：60 条件 1-seed 同超参网格（探索性）
@@ -528,6 +530,14 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 相同**，只允许差 `feedback` 一个变量；经典臂只作任务与训练代码能否学动的
 **装置有效性正对照**。
 
+**统计范围（按统计 / 实验设计 / EDA 技能补齐）**：独立重复单位是 **seed
+（n=2）**，不是 batch、token 或序列；下表数字是 2 seed 均值的**示意值**，
+未报 SD / CI、不做显著性检验。字符语料评估固定同一批 4 个 val batch；
+延迟回忆是合成任务，只有 `k=4` 种输入序列，训练与评估的输入空间
+**完全重叠**，所以它的 `acc` 是拟合 / 记忆通路检查，**不是 held-out 泛化**；
+每 seed 32 个样本也不能当成 n=32 的独立重复（伪重复）。详见归档
+`reporting_scope` 字段。
+
 | 检查 | 量子·开 (A0) | 量子·关 (A1) | 经典·开 (正对照) | 经典·关 |
 | --- | --- | --- | --- | --- |
 | P1 改前缀后末位输出变化 | `1.12e-3` | **0** | `3.82e-2` | **0** |
@@ -555,6 +565,19 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 （`332.7 MB`，`--probe-memory` 在新进程复测 `334.8 MB`，差 2.1 MB 属基线波动；
 运行当时可用物理内存仅 2.58 GB / 31.2 GB，没有叠加其它训练任务）。
 
+**机制诊断（解析，不是训练结论）**：L1 把状态以 `RZ` 相位重上传，读出却
+只有 `expval(Z)`；Z 基下局部相位不改变振幅模方，纠缠层权重为 0 时
+`|∂Z/∂s|` 近零（`2.29e-9`）。默认 `init_std=0.05` 下只有 `5.20e-3`，同轴
+`RY` 反馈是 `8.48e-1`（**约 163× 压制**）；只把读出换成 `expval(X)`，即使
+权重为 0 也能看见相位（`4.13e-2`）。见
+[`experiments/state_channel_probe.py`](experiments/state_channel_probe.py) 与
+[`docs/state_channel_probe.json`](docs/state_channel_probe.json)。这为
+「反馈增益 0」给出一个**可检验候选原因**：状态通路在初始化附近接近死通道，
+120 步短训练可能来不及打开。**但这是解析梯度、不是训练梯度**：既不能写成
+「量子循环不能记忆」，也不能写成「换读出就学得会」；「功能有效性未证明」
+这一结论不变。下一步应先做读出基 / 状态门的单变量 A/B 重训练来验证，
+而不是先盲目延长训练。
+
 **图怎么读**：(a) 对数轴下「开反馈」柱高、「关反馈」严格贴 0，是 P1/P2 的
 单变量证据；(b) 四条 loss 曲线全部下降、灰虚线是均匀基线，只说明装置没塌；
 (c) 只有经典正对照越过红色随机基线，是「功能有效性未证明」的关键面板；
@@ -574,9 +597,12 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 > 工作区根的 `.venv/Scripts/python.exe`。重画可加 `--out <目录>` 隔离输出，
 > 避免误覆盖 `docs/figures/` 的正式图。
 
-**下一步（本轮未启动）**：A2/A3 同构对照（≥5 seed、配对 CI、Holm）与 L2
-隐量子态延续都是长训练，需另行确认预算与内存窗口；在此之前不写下任何
-效果结论。契约测试新增 `check_recurrent_pilot()`。
+**下一步（本轮未启动，需确认预算与内存）**：① 先做读出基（`Z` → 含
+`X/Y`）/ 状态门（`RZ` → `RY`）的**单变量 A/B 重训练**，验证上述机制假设；
+② 机制明确后再延长训练 / 扫 Q、线路深度、lr，仍以延迟回忆当装置有效性
+门槛；③ 通过之后才谈 A2/A3 同构对照（≥5 seed、配对 CI、Holm）与 L2
+隐量子态延续。在此之前不写下任何效果结论。契约测试新增
+`check_recurrent_pilot()` 与 `check_state_channel_probe()`。
 
 ### 2. 复现受控基线（`train_llm.py`）与完整 5-Seed 诊断（`diagnose_llm.py`）
 
