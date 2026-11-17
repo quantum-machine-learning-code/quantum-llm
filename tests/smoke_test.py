@@ -616,6 +616,78 @@ def check_recurrent_architecture() -> None:
     assert d > 1e-3, f"feedback 消融应改变输出，实测 {d:.6f}"
 
 
+def check_recurrent_pilot() -> None:
+    """L1 短预算 pilot 契约：状态消融是单变量、P1–P4 可量化、结论边界不被越过。
+
+    只跑 ``--quick --out <tmp>``，不写 docs/ 归档、不重跑正式实验。
+    这里验证的是**装置与口径**，不是任何模型效果。
+    """
+    import json
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            sys.executable,
+            str(ROOT / "experiments" / "recurrent_pilot.py"),
+            "--quick", "--no-figure", "--out", tmpdir,
+        ]
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True,
+                              text=True, check=False)
+        assert proc.returncode == 0, (
+            f"recurrent_pilot.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+        )
+        report = json.loads(
+            (Path(tmpdir) / "recurrent_pilot.json").read_text(encoding="utf-8")
+        )
+
+    # 消融单变量：A0/A1 与两经典臂的初始权重必须逐元素相同
+    for pair, info in report["ablation_matched_check"].items():
+        assert info["max_abs_init_weight_diff"] == 0.0, (
+            f"{pair} 初始权重不一致，状态反馈消融被污染"
+        )
+        assert info["only_difference"] == "feedback"
+
+    contracts = report["contracts"]
+    on_q = contracts["A0_quantum_feedback"]
+    off_q = contracts["A1_quantum_no_feedback"]
+    on_c = contracts["CTRL_classical_feedback"]
+    # P1：前缀信息只有在状态反馈打开时才传得到末位
+    assert on_q["P1_prefix_logits_mean_abs_delta"] > 0
+    assert off_q["P1_prefix_logits_mean_abs_delta"] < 1e-9
+    assert on_c["P1_prefix_logits_mean_abs_delta"] > 0
+    # P2：跨步梯度在开反馈时非空、关反馈时消失
+    assert on_q["P2_state_grad_norm"] > 0
+    assert off_q["P2_state_grad_norm"] == 0.0
+    assert on_q["P2b_bptt_grad_norm"] > 0
+    # P3/P4：严格因果、逐步生成
+    for name, c in contracts.items():
+        assert c["P3_future_leakage_max_abs"] < 1e-6, f"{name} 未来信息泄漏"
+        assert c["P4_generate_length_ok"] and c["P4_prefix_preserved"], (
+            f"{name} 逐步生成接口不正确"
+        )
+
+    # 语料泄漏口径：报验证集指标必须带 k=4 上下文重叠率
+    assert 0.0 <= report["corpus"]["val_context_k4_coverage"] <= 1.0
+    # 训练曲线与耗时必须是有限数
+    for arm, runs in report["char_lm"]["per_arm"].items():
+        for r in runs:
+            assert math.isfinite(r["train_final_loss"]), f"{arm} loss 非有限数"
+            assert math.isfinite(r["eval"]["val_loss"]), f"{arm} val loss 非有限数"
+            assert r["seconds_per_step"] > 0
+    assert report["runtime"]["single_process"] is True
+
+    # 结论边界：必须显式禁止「量子 vs 经典优劣」与显著性结论
+    verdict = report["verdict"]
+    assert verdict["all_contracts_pass"] is True
+    forbidden = " ".join(verdict["claims_forbidden"])
+    assert "量子循环优于" in forbidden and "Holm" in forbidden
+    assert "≥5 seed" in forbidden, "必须显式禁止用本 pilot 下结论性数字"
+    # 结构契约与功能有效性必须分开记录，防止把 P1–P4 通过误读成「状态被用上」
+    fv = verdict["functional_state_use"]
+    assert "quantum_above_baseline" in fv
+    assert "未证明" in fv["interpretation"]
+    assert report["corpus"]["val_context_k4_coverage"] < 0.5
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -642,6 +714,7 @@ test_embedding_modes = check_embedding_modes
 test_grokking_scan = check_grokking_scan
 test_grokking_no_prior = check_grokking_no_prior
 test_recurrent_architecture = check_recurrent_architecture
+test_recurrent_pilot = check_recurrent_pilot
 test_quick_cli = check_quick_cli
 
 
@@ -656,6 +729,7 @@ def main() -> None:
     check_rich_quantum_layers()
     check_causal_strictness_and_seed_control()
     check_recurrent_architecture()
+    check_recurrent_pilot()
     check_lm()
     check_quick_cli()
     print("SMOKE OK")

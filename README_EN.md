@@ -72,6 +72,17 @@ At current hardware and state-vector simulator limits ($2^n$ state dimension), b
 > quantum recurrent prototype is now in `qml_lab/recurrent.py`, with the L0/L1/L2
 > roadmap and P1–P4 criteria in `docs/ARCHITECTURE_PROPOSAL.md`. All archives in
 > this section are labelled **classical-bottleneck baselines**.
+>
+> **L1 short-budget pilot (§16, 2026-11-17)**: `experiments/recurrent_pilot.py`
+> verifies the P1–P4 structural contracts (4/4 pass; disabling state feedback
+> zeroes prefix sensitivity and cross-step gradients exactly) and measures cost
+> (`0.194 s/step` at T=8, `~0.11 h/seed` for 2000 steps, 333 MB peak, single
+> process). **Functional state use is NOT demonstrated**: on a delayed-recall
+> task both quantum arms stay at `0.297` (random baseline `0.25`) while the
+> classical positive control reaches `0.594`. This is a device calibration, not
+> an effect comparison — no quantum-vs-classical claim, paired CI, or Holm
+> significance is reported. See `docs/recurrent_pilot.json` and
+> `docs/figures/recurrent_pilot.png`; README section 1f has the full table.
 
 ## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
 

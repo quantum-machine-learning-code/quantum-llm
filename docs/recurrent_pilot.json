@@ -1,0 +1,846 @@
+{
+  "task": "L1 recurrent pilot: architecture contracts, state ablation, cost",
+  "created": "2026-11-17 02:48:13",
+  "config": {
+    "seeds": 2,
+    "steps": 120,
+    "seq_len": 8,
+    "batch": 8,
+    "lr": 0.01,
+    "recall_steps": 120,
+    "n_qubits": 4,
+    "timing_repeats": 4,
+    "vocab_size": 29,
+    "train_chars": 3171,
+    "val_chars": 947,
+    "val_context_k4_coverage": 0.3867
+  },
+  "corpus": {
+    "name": "independent_split (字符级，句级 disjoint，零 UNK)",
+    "val_context_k4_coverage": 0.3867,
+    "note": "报验证集泛化必须带 k=4 上下文重叠率（项目既有约定）。"
+  },
+  "ablation_matched_check": {
+    "A0_quantum_feedback__vs__A1_quantum_no_feedback": {
+      "max_abs_init_weight_diff": 0.0,
+      "n_tensors": 9,
+      "only_difference": "feedback"
+    },
+    "CTRL_classical_feedback__vs__CTRL_classical_no_feedback": {
+      "max_abs_init_weight_diff": 0.0,
+      "n_tensors": 10,
+      "only_difference": "feedback"
+    }
+  },
+  "contracts": {
+    "A0_quantum_feedback": {
+      "P1_prefix_logits_mean_abs_delta": 0.0011166416807100177,
+      "P2_state_grad_norm": 0.013593987561762333,
+      "P2_state_zeroing_mean_abs_delta": 0.010802696458995342,
+      "P2b_bptt_grad_norm": 0.00800003856420517,
+      "P3_future_leakage_max_abs": 0.0,
+      "P4_generate_length_ok": true,
+      "P4_prefix_preserved": true,
+      "P4_new_token_fraction": 0.875
+    },
+    "A1_quantum_no_feedback": {
+      "P1_prefix_logits_mean_abs_delta": 0.0,
+      "P2_state_grad_norm": 0.0,
+      "P2_state_zeroing_mean_abs_delta": 0.0,
+      "P2b_bptt_grad_norm": 0.014598499052226543,
+      "P3_future_leakage_max_abs": 0.0,
+      "P4_generate_length_ok": true,
+      "P4_prefix_preserved": true,
+      "P4_new_token_fraction": 0.875
+    },
+    "CTRL_classical_feedback": {
+      "P1_prefix_logits_mean_abs_delta": 0.038176029920578,
+      "P2_state_grad_norm": 0.04921577498316765,
+      "P2_state_zeroing_mean_abs_delta": 0.14451055228710175,
+      "P2b_bptt_grad_norm": 0.02533426508307457,
+      "P3_future_leakage_max_abs": 0.0,
+      "P4_generate_length_ok": true,
+      "P4_prefix_preserved": true,
+      "P4_new_token_fraction": 0.875
+    },
+    "CTRL_classical_no_feedback": {
+      "P1_prefix_logits_mean_abs_delta": 0.0,
+      "P2_state_grad_norm": 0.0,
+      "P2_state_zeroing_mean_abs_delta": 0.0,
+      "P2b_bptt_grad_norm": 0.0,
+      "P3_future_leakage_max_abs": 0.0,
+      "P4_generate_length_ok": true,
+      "P4_prefix_preserved": true,
+      "P4_new_token_fraction": 0.875
+    }
+  },
+  "timing": {
+    "T=4": {
+      "A0_quantum_feedback": 0.0863397499997518,
+      "A1_quantum_no_feedback": 0.08617450000019744,
+      "CTRL_classical_feedback": 0.004188700000668177,
+      "CTRL_classical_no_feedback": 0.002743700002611149
+    },
+    "T=8": {
+      "A0_quantum_feedback": 0.19364019999920856,
+      "A1_quantum_no_feedback": 0.19075764999797684,
+      "CTRL_classical_feedback": 0.004251750000548782,
+      "CTRL_classical_no_feedback": 0.0061582500020449515
+    },
+    "T=16": {
+      "A0_quantum_feedback": 0.3881007999989379,
+      "A1_quantum_no_feedback": 0.3439326500010793,
+      "CTRL_classical_feedback": 0.008055799997237045,
+      "CTRL_classical_no_feedback": 0.013506100000086008
+    }
+  },
+  "char_lm": {
+    "per_arm": {
+      "A0_quantum_feedback": [
+        {
+          "task": "char_lm",
+          "arm": "A0_quantum_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.8353922367095947
+            },
+            {
+              "step": 40,
+              "loss": 2.8918557167053223
+            },
+            {
+              "step": 60,
+              "loss": 2.666893720626831
+            },
+            {
+              "step": 80,
+              "loss": 2.721492052078247
+            },
+            {
+              "step": 100,
+              "loss": 2.3979780673980713
+            },
+            {
+              "step": 120,
+              "loss": 2.561650514602661
+            }
+          ],
+          "train_final_loss": 2.561650514602661,
+          "eval": {
+            "val_loss": 2.656289219856262,
+            "val_perplexity": 14.243337020483267,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.1904413408333615,
+          "wallclock_seconds": 22.85296090000338
+        },
+        {
+          "task": "char_lm",
+          "arm": "A0_quantum_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.901578426361084
+            },
+            {
+              "step": 40,
+              "loss": 2.662870407104492
+            },
+            {
+              "step": 60,
+              "loss": 2.9415857791900635
+            },
+            {
+              "step": 80,
+              "loss": 2.703433036804199
+            },
+            {
+              "step": 100,
+              "loss": 2.677700996398926
+            },
+            {
+              "step": 120,
+              "loss": 2.58219575881958
+            }
+          ],
+          "train_final_loss": 2.58219575881958,
+          "eval": {
+            "val_loss": 2.666334092617035,
+            "val_perplexity": 14.387130513156471,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.18777772333335938,
+          "wallclock_seconds": 22.533326800003124
+        }
+      ],
+      "A1_quantum_no_feedback": [
+        {
+          "task": "char_lm",
+          "arm": "A1_quantum_no_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.8304638862609863
+            },
+            {
+              "step": 40,
+              "loss": 2.889641523361206
+            },
+            {
+              "step": 60,
+              "loss": 2.659977674484253
+            },
+            {
+              "step": 80,
+              "loss": 2.7273144721984863
+            },
+            {
+              "step": 100,
+              "loss": 2.377797842025757
+            },
+            {
+              "step": 120,
+              "loss": 2.5802001953125
+            }
+          ],
+          "train_final_loss": 2.5802001953125,
+          "eval": {
+            "val_loss": 2.6736825704574585,
+            "val_perplexity": 14.493243429618472,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.17889307083332823,
+          "wallclock_seconds": 21.46716849999939
+        },
+        {
+          "task": "char_lm",
+          "arm": "A1_quantum_no_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.9018640518188477
+            },
+            {
+              "step": 40,
+              "loss": 2.6624245643615723
+            },
+            {
+              "step": 60,
+              "loss": 2.9464619159698486
+            },
+            {
+              "step": 80,
+              "loss": 2.689889907836914
+            },
+            {
+              "step": 100,
+              "loss": 2.599443197250366
+            },
+            {
+              "step": 120,
+              "loss": 2.6119818687438965
+            }
+          ],
+          "train_final_loss": 2.6119818687438965,
+          "eval": {
+            "val_loss": 2.6687837839126587,
+            "val_perplexity": 14.422417745309762,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.1843628416666737,
+          "wallclock_seconds": 22.12354100000084
+        }
+      ],
+      "CTRL_classical_feedback": [
+        {
+          "task": "char_lm",
+          "arm": "CTRL_classical_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.788426160812378
+            },
+            {
+              "step": 40,
+              "loss": 2.8197124004364014
+            },
+            {
+              "step": 60,
+              "loss": 2.5095744132995605
+            },
+            {
+              "step": 80,
+              "loss": 2.671464443206787
+            },
+            {
+              "step": 100,
+              "loss": 2.2855019569396973
+            },
+            {
+              "step": 120,
+              "loss": 2.514965772628784
+            }
+          ],
+          "train_final_loss": 2.514965772628784,
+          "eval": {
+            "val_loss": 2.596910774707794,
+            "val_perplexity": 13.422209693164794,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.007130478333298621,
+          "wallclock_seconds": 0.8556573999958346
+        },
+        {
+          "task": "char_lm",
+          "arm": "CTRL_classical_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.773900032043457
+            },
+            {
+              "step": 40,
+              "loss": 2.3198065757751465
+            },
+            {
+              "step": 60,
+              "loss": 2.6859254837036133
+            },
+            {
+              "step": 80,
+              "loss": 2.4812424182891846
+            },
+            {
+              "step": 100,
+              "loss": 2.51457142829895
+            },
+            {
+              "step": 120,
+              "loss": 2.504234790802002
+            }
+          ],
+          "train_final_loss": 2.504234790802002,
+          "eval": {
+            "val_loss": 2.5728975534439087,
+            "val_perplexity": 13.103738267684074,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.006990838333331339,
+          "wallclock_seconds": 0.8389005999997607
+        }
+      ],
+      "CTRL_classical_no_feedback": [
+        {
+          "task": "char_lm",
+          "arm": "CTRL_classical_no_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.7449698448181152
+            },
+            {
+              "step": 40,
+              "loss": 2.8192267417907715
+            },
+            {
+              "step": 60,
+              "loss": 2.4682228565216064
+            },
+            {
+              "step": 80,
+              "loss": 2.671276569366455
+            },
+            {
+              "step": 100,
+              "loss": 2.34010910987854
+            },
+            {
+              "step": 120,
+              "loss": 2.519094467163086
+            }
+          ],
+          "train_final_loss": 2.519094467163086,
+          "eval": {
+            "val_loss": 2.6022428274154663,
+            "val_perplexity": 13.493968764263032,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.0071406458332906675,
+          "wallclock_seconds": 0.85687749999488
+        },
+        {
+          "task": "char_lm",
+          "arm": "CTRL_classical_no_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 2.776822566986084
+            },
+            {
+              "step": 40,
+              "loss": 2.3155393600463867
+            },
+            {
+              "step": 60,
+              "loss": 2.750314950942993
+            },
+            {
+              "step": 80,
+              "loss": 2.4954674243927
+            },
+            {
+              "step": 100,
+              "loss": 2.586818218231201
+            },
+            {
+              "step": 120,
+              "loss": 2.504068613052368
+            }
+          ],
+          "train_final_loss": 2.504068613052368,
+          "eval": {
+            "val_loss": 2.603591561317444,
+            "val_perplexity": 13.51218081625282,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.007324372500018702,
+          "wallclock_seconds": 0.8789247000022442
+        }
+      ]
+    }
+  },
+  "delayed_recall": {
+    "per_arm": {
+      "A0_quantum_feedback": [
+        {
+          "task": "delayed_recall",
+          "arm": "A0_quantum_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.4607782363891602
+            },
+            {
+              "step": 40,
+              "loss": 1.5131378173828125
+            },
+            {
+              "step": 60,
+              "loss": 1.4970656633377075
+            },
+            {
+              "step": 80,
+              "loss": 1.571632742881775
+            },
+            {
+              "step": 100,
+              "loss": 1.4183688163757324
+            },
+            {
+              "step": 120,
+              "loss": 1.4435181617736816
+            }
+          ],
+          "train_final_loss": 1.4435181617736816,
+          "eval": {
+            "val_loss": 1.383167564868927,
+            "last_token_accuracy": 0.1875,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.12266982500004815,
+          "wallclock_seconds": 14.720379000005778
+        },
+        {
+          "task": "delayed_recall",
+          "arm": "A0_quantum_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.3766014575958252
+            },
+            {
+              "step": 40,
+              "loss": 1.3014148473739624
+            },
+            {
+              "step": 60,
+              "loss": 1.388419508934021
+            },
+            {
+              "step": 80,
+              "loss": 1.4578487873077393
+            },
+            {
+              "step": 100,
+              "loss": 1.4011753797531128
+            },
+            {
+              "step": 120,
+              "loss": 1.4032377004623413
+            }
+          ],
+          "train_final_loss": 1.4032377004623413,
+          "eval": {
+            "val_loss": 1.356716901063919,
+            "last_token_accuracy": 0.40625,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.10547776500000812,
+          "wallclock_seconds": 12.657331800000975
+        }
+      ],
+      "A1_quantum_no_feedback": [
+        {
+          "task": "delayed_recall",
+          "arm": "A1_quantum_no_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.460456371307373
+            },
+            {
+              "step": 40,
+              "loss": 1.5096657276153564
+            },
+            {
+              "step": 60,
+              "loss": 1.4977033138275146
+            },
+            {
+              "step": 80,
+              "loss": 1.5483441352844238
+            },
+            {
+              "step": 100,
+              "loss": 1.4184489250183105
+            },
+            {
+              "step": 120,
+              "loss": 1.4462635517120361
+            }
+          ],
+          "train_final_loss": 1.4462635517120361,
+          "eval": {
+            "val_loss": 1.3862600922584534,
+            "last_token_accuracy": 0.1875,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.11702754749997742,
+          "wallclock_seconds": 14.04330569999729
+        },
+        {
+          "task": "delayed_recall",
+          "arm": "A1_quantum_no_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.3757426738739014
+            },
+            {
+              "step": 40,
+              "loss": 1.2946281433105469
+            },
+            {
+              "step": 60,
+              "loss": 1.3864120244979858
+            },
+            {
+              "step": 80,
+              "loss": 1.4535391330718994
+            },
+            {
+              "step": 100,
+              "loss": 1.4043349027633667
+            },
+            {
+              "step": 120,
+              "loss": 1.4029489755630493
+            }
+          ],
+          "train_final_loss": 1.4029489755630493,
+          "eval": {
+            "val_loss": 1.3545328080654144,
+            "last_token_accuracy": 0.40625,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.11679472750001878,
+          "wallclock_seconds": 14.015367300002254
+        }
+      ],
+      "CTRL_classical_feedback": [
+        {
+          "task": "delayed_recall",
+          "arm": "CTRL_classical_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.492534875869751
+            },
+            {
+              "step": 40,
+              "loss": 1.5340677499771118
+            },
+            {
+              "step": 60,
+              "loss": 1.590741753578186
+            },
+            {
+              "step": 80,
+              "loss": 1.570718765258789
+            },
+            {
+              "step": 100,
+              "loss": 1.4309172630310059
+            },
+            {
+              "step": 120,
+              "loss": 1.4901976585388184
+            }
+          ],
+          "train_final_loss": 1.4901976585388184,
+          "eval": {
+            "val_loss": 1.4150357246398926,
+            "last_token_accuracy": 0.1875,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.004443037499974404,
+          "wallclock_seconds": 0.5331644999969285
+        },
+        {
+          "task": "delayed_recall",
+          "arm": "CTRL_classical_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.3716062307357788
+            },
+            {
+              "step": 40,
+              "loss": 1.0877431631088257
+            },
+            {
+              "step": 60,
+              "loss": 0.4475225508213043
+            },
+            {
+              "step": 80,
+              "loss": 0.3794424831867218
+            },
+            {
+              "step": 100,
+              "loss": 0.06810080260038376
+            },
+            {
+              "step": 120,
+              "loss": 0.004647360183298588
+            }
+          ],
+          "train_final_loss": 0.004647360183298588,
+          "eval": {
+            "val_loss": 0.004989557201042771,
+            "last_token_accuracy": 1.0,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.004682979166682344,
+          "wallclock_seconds": 0.5619575000018813
+        }
+      ],
+      "CTRL_classical_no_feedback": [
+        {
+          "task": "delayed_recall",
+          "arm": "CTRL_classical_no_feedback",
+          "seed": 0,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.4980636835098267
+            },
+            {
+              "step": 40,
+              "loss": 1.5303205251693726
+            },
+            {
+              "step": 60,
+              "loss": 1.597496509552002
+            },
+            {
+              "step": 80,
+              "loss": 1.569855809211731
+            },
+            {
+              "step": 100,
+              "loss": 1.4250683784484863
+            },
+            {
+              "step": 120,
+              "loss": 1.4613077640533447
+            }
+          ],
+          "train_final_loss": 1.4613077640533447,
+          "eval": {
+            "val_loss": 1.4001145958900452,
+            "last_token_accuracy": 0.1875,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.004557293333346024,
+          "wallclock_seconds": 0.5468752000015229
+        },
+        {
+          "task": "delayed_recall",
+          "arm": "CTRL_classical_no_feedback",
+          "seed": 1,
+          "steps": 120,
+          "curve": [
+            {
+              "step": 20,
+              "loss": 1.3813010454177856
+            },
+            {
+              "step": 40,
+              "loss": 1.2875800132751465
+            },
+            {
+              "step": 60,
+              "loss": 1.383297085762024
+            },
+            {
+              "step": 80,
+              "loss": 1.4534448385238647
+            },
+            {
+              "step": 100,
+              "loss": 1.4021865129470825
+            },
+            {
+              "step": 120,
+              "loss": 1.4013612270355225
+            }
+          ],
+          "train_final_loss": 1.4013612270355225,
+          "eval": {
+            "val_loss": 1.370338350534439,
+            "last_token_accuracy": 0.40625,
+            "random_baseline": 0.25,
+            "n_batches": 4
+          },
+          "seconds_per_step": 0.004426021666646799,
+          "wallclock_seconds": 0.5311225999976159
+        }
+      ]
+    },
+    "k": 4,
+    "pad_len": 4,
+    "random_baseline": 0.25,
+    "note": "只在末位监督复现开头 token；无状态模型理论上无法超过 1/k。"
+  },
+  "cost_projection": {
+    "quantum_seconds_per_step_at_T8": 0.19364019999920856,
+    "classical_seconds_per_step_at_T8": 0.004251750000548782,
+    "quantum_hours_per_seed": 0.1075778888884492,
+    "classical_hours_per_seed": 0.002362083333638212,
+    "projection_steps": 2000,
+    "note": "按计时探针单步耗时线性外推；正式实验还需 ≥5 seed 与更长步数。"
+  },
+  "runtime": {
+    "single_process": true,
+    "omp_mkl_threads": 1,
+    "peak_rss_mb": 332.7,
+    "memory_probe": {
+      "baseline_peak_mb": 321.3,
+      "peak_working_set_mb": 332.7,
+      "config": "4 臂各 3 步前向+反向，B=8/T=8，单进程，OMP=MKL=1",
+      "note": "独立探针（Windows GetProcessMemoryInfo）；正式 pilot 运行时 psutil 不可用故归档为 null，此值为同等配置的补测。",
+      "available_physical_gb_at_run": 2.58
+    }
+  },
+  "scope": "探索性短预算 pilot；不是性能对照实验",
+  "verdict": {
+    "status": "探索性短预算 pilot；不得据此下性能结论",
+    "p1_prefix_effect_mean_abs_delta": 0.0011166416807100177,
+    "checks": {
+      "P1_前缀影响末位输出": true,
+      "P2_状态梯度跨步且关反馈后消失": true,
+      "P3_严格因果无未来泄漏": true,
+      "P4_逐步生成接口正确": true,
+      "装置有效_经典正对照loss低于均匀基线": true,
+      "装置有效_量子循环loss低于均匀基线": true
+    },
+    "all_contracts_pass": true,
+    "functional_state_use": {
+      "quantum_above_baseline": false,
+      "quantum_feedback_gain": 0.0,
+      "classical_feedback_gain": 0.296875,
+      "classical_positive_control_above_baseline": true,
+      "quantum_accuracy": 0.296875,
+      "quantum_no_feedback_accuracy": 0.296875,
+      "classical_accuracy": 0.59375,
+      "classical_no_feedback_accuracy": 0.296875,
+      "random_baseline": 0.25,
+      "interpretation": "P1–P4 结构契约通过，只说明信息流与梯度路径存在；延迟回忆上量子两臂仍近随机基线，说明本短预算下尚未证明状态反馈被模型实际利用。不能推出「量子循环不能记忆」，也不能推出「经典更好」——两臂预算、容量、参数化都未对齐。"
+    },
+    "device_validity": {
+      "classical_positive_control_val_loss": 2.5849041640758514,
+      "quantum_cycle_val_loss": 2.6613116562366486,
+      "uniform_baseline_loss": 3.367295829986474,
+      "delayed_recall_classical_accuracy": 0.59375,
+      "delayed_recall_random_baseline": 0.25
+    },
+    "claims_allowed": [
+      "L1 原型在结构上满足 P1–P4（若四条为 true）",
+      "关掉状态反馈后前缀敏感度与跨步梯度严格归零（单变量消融）",
+      "每步耗时与外推成本",
+      "本短预算下量子臂未完成延迟回忆，装置的功能有效性未证明"
+    ],
+    "claims_forbidden": [
+      "量子循环优于/劣于经典 RNN",
+      "量子层对语言建模有/无正贡献",
+      "任何准确率差值、配对 CI、Holm 校正后的显著数",
+      "任何需要 ≥5 seed 的结论性数字"
+    ],
+    "caveats": [
+      "2 seed × 短步数，仅装置标定与成本测量。",
+      "延迟回忆若各臂都停在随机基线，只能说明该预算下没学会，不能推出「状态无用」或「架构不行」；需更长训练与消融才能判断。",
+      "经典臂只作任务/训练代码的正对照，不构成同构消融。",
+      "状态仍是经典数值（测量-反馈 L1），量子态本身不跨步延续（L2 未实现）。",
+      "模 112 加法答案只有 1 个 token，不适合检验序列依赖，本 pilot 未用它。",
+      "仍是 default.qubit 解析状态向量，无 shots / 噪声 / 真机。"
+    ]
+  }
+}

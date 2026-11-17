@@ -64,6 +64,8 @@
 > 状态，课题一还是一次性分类 —— 再干净的对照也只测到「两种 pointwise
 > 非线性」。已落地 L1 量子循环原型 `qml_lab/recurrent.py` 与
 > [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md)；
+> 短预算 pilot 已验证 P1–P4 结构契约 4/4，但延迟回忆上量子两臂仍停在
+> 随机基线，**状态功能有效性尚未证明**（见 [1f 节](#1f-l1-短预算-pilot结构契约过关但状态还没被证明用上)）。
 > 本节所有归档统一标为「经典瓶颈基线」。
 
 ## 课题一：模 112 加法（$\mathbb{Z}_{112}$，2026-11-13）
@@ -387,8 +389,9 @@ quantum-llm/
 │   ├── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
 │   ├── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
 │   ├── matched_calibration.py      # 严格对照的装置诊断 + 公开记录的最小调参网格
-│   └── capacity_matched.py         # 容量匹配 pilot：n_layers 1→20 的参数量 / 初始行为 / 单步成本
-├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、L1 架构 P1–P4）
+│   ├── capacity_matched.py         # 容量匹配 pilot：n_layers 1→20 的参数量 / 初始行为 / 单步成本
+│   └── recurrent_pilot.py          # L1 短预算 A0/A1 pilot：P1–P4 契约、状态消融、延迟回忆、计时与内存
+├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、L1 架构 P1–P4 与 pilot 口径）
 ├── docs/
 │   ├── REVIEW.md                   # 完整方法学审查（§7–15：语料 / 加法 / embedding / grokking / 对照口径 / 架构资格）
 │   ├── ARCHITECTURE_PROPOSAL.md    # L0/L1/L2 架构层级、P1–P4 判据、消融设计与成本风险
@@ -405,6 +408,7 @@ quantum-llm/
 │   ├── matched_v4_metrics.json     # 装置 v4（共同可行域 lr=0.003，以 device_validity 为准）
 │   ├── matched_calibration.json    # 四套装置的初始行为诊断 + 两阶段标定网格
 │   ├── capacity_matched_pilot.json # 容量匹配 pilot（n_layers 1/5/10/20）
+│   ├── recurrent_pilot.json        # L1 短预算 pilot：P1–P4 / 状态消融 / 延迟回忆 / 成本与内存
 │   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
 │   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
 │   ├── grokking_no_prior_pilot.json # 修正轮：60 条件 1-seed 同超参网格（探索性）
@@ -503,6 +507,66 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 本机可用内存常在 8–9 GB / 31 GB，每个 worker 约 420 MB：**正式训练
 `workers=4`、标定/诊断 `workers=2`、容量 pilot 单进程，且不要同时叠加两个
 多进程任务**；统一设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
+
+### 1f. L1 短预算 pilot：结构契约过关，但状态还没被证明用上
+
+> **这一步不是效果对照，也不比较量子与经典谁更好。** 方案第 10 节的第 3 步
+> （验证 P1–P4 与训练成本）已交付，归档
+> [`docs/recurrent_pilot.json`](docs/recurrent_pilot.json)、
+> 图 [`docs/figures/recurrent_pilot.png`](docs/figures/recurrent_pilot.png)。
+> 2 seed × 120 步、单进程；所有数字只作**装置标定与成本测量**，
+> 没有配对 CI、没有 Holm、没有「量子 vs 经典」优劣结论。
+
+按方案第 5 节换掉了「一次性答案分类」口径：训练与评估都用**标准下一 token
+预测**，语料为独立切分字符集（train 3171 / val 947 字符，V=29，
+**k=4 上下文覆盖率 0.3867**）；另加延迟回忆小任务
+（`[目标][pad×4][提示]` → 只在末位监督复现目标，随机基线 `1/4=0.25`）
+检验状态是否真的承载跨步信息。
+
+四臂是 **2×2 因子设计**，但比较轴只有一个：`feedback` 开/关。代码在
+`assert_ablation_matched()` 里硬断言 A0/A1（以及两经典臂）**初始权重逐元素
+相同**，只允许差 `feedback` 一个变量；经典臂只作任务与训练代码能否学动的
+**装置有效性正对照**。
+
+| 检查 | 量子·开 (A0) | 量子·关 (A1) | 经典·开 (正对照) | 经典·关 |
+| --- | --- | --- | --- | --- |
+| P1 改前缀后末位输出变化 | `1.12e-3` | **0** | `3.82e-2` | **0** |
+| P2 状态梯度范数 | `1.36e-2` | **0** | `4.92e-2` | **0** |
+| P3 未来信息泄漏 | 0 | 0 | 0 | 0 |
+| P4 逐步生成长度/前缀 | ✓ | ✓ | ✓ | ✓ |
+| 字符语料 val loss（均匀基线 `3.367`） | `2.6613` | `2.6712` | `2.5849` | `2.6029` |
+| 延迟回忆末位 acc（基线 `0.25`） | `0.297` | `0.297` | **`0.594`** | `0.297` |
+
+**P1–P4 结构契约 4/4 通过**，且关反馈后前缀敏感度与跨步梯度严格归零 ——
+信息流与梯度路径确实经过量子线路。四臂 loss 都下降，训练装置没有塌。
+
+**但功能有效性没有被证明**：延迟回忆上量子开/关都停在 `0.297`（≈基线），
+只有经典正对照到 `0.594`（反馈增益 `+0.297`），量子反馈增益为 `0`。
+这只能读作「本短预算下量子循环没学会用状态」，**不能**推出「量子循环不能
+记忆」（步数/容量/参数化都没扫），也**不能**推出「经典更好」（两臂预算、
+容量、参数化都未对齐）。结构上有资格 ≠ 状态被用上，这两层必须分开。
+
+成本（单进程，`OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`）：量子每步
+`T=4/8/16` = `0.086 / 0.194 / 0.388 s`，经典 `0.0042 / 0.0043 / 0.0081 s`；
+`T=8` 外推 2000 步约 **`0.11 h/seed`**。实测单进程峰值工作集 **333 MB**
+（运行当时可用物理内存仅 2.58 GB / 31.2 GB，没有叠加其它训练任务）。
+
+**图怎么读**：(a) 对数轴下「开反馈」柱高、「关反馈」严格贴 0，是 P1/P2 的
+单变量证据；(b) 四条 loss 曲线全部下降、灰虚线是均匀基线，只说明装置没塌；
+(c) 只有经典正对照越过红色随机基线，是「功能有效性未证明」的关键面板；
+(d) 成本随序列长度上升，右下角是 2000 步外推。**四张图都不报差值显著性**。
+
+```bash
+# 正式短 pilot（单进程，写 docs/）；--quick 只跑冒烟并写 results/
+.venv/bin/python experiments/recurrent_pilot.py
+# 改结论口径 / 改图版式时不要重跑训练
+.venv/bin/python experiments/recurrent_pilot.py --recompute-from docs/recurrent_pilot.json
+.venv/bin/python experiments/recurrent_pilot.py --redraw-from docs/recurrent_pilot.json
+```
+
+**下一步（本轮未启动）**：A2/A3 同构对照（≥5 seed、配对 CI、Holm）与 L2
+隐量子态延续都是长训练，需另行确认预算与内存窗口；在此之前不写下任何
+效果结论。契约测试新增 `check_recurrent_pilot()`。
 
 ### 2. 复现受控基线（`train_llm.py`）与完整 5-Seed 诊断（`diagnose_llm.py`）
 

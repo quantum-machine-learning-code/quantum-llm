@@ -2,6 +2,16 @@
 
 All notable changes to `quantum-llm` will be documented in this file.
 
+## [Unreleased] - 2026-11-17
+
+### Added
+- L1 short-budget pilot ([`experiments/recurrent_pilot.py`](experiments/recurrent_pilot.py)): standard next-token prediction on the independent character split (k=4 coverage 0.3867), a delayed-recall memory task, and a 2x2 `{quantum, classical} x {feedback on/off}` device calibration. Quantifies P1-P4 contracts, asserts the state ablation is single-variable at the code level, and measures per-step cost plus peak working set (333 MB, single process).
+- `check_recurrent_pilot()` offline contract test; `--recompute-from` / `--redraw-from` for recomputing the verdict or redrawing the Chinese figure without retraining.
+- Archives [`docs/recurrent_pilot.json`](docs/recurrent_pilot.json) and [`docs/figures/recurrent_pilot.png`](docs/figures/recurrent_pilot.png); documentation in README 1f, REVIEW section 16, and ARCHITECTURE_PROPOSAL section 10.
+
+### Notes
+- **P1-P4 structural contracts pass 4/4**; disabling state feedback zeroes prefix sensitivity and cross-step gradients exactly. **Functional state use is NOT demonstrated**: on delayed recall both quantum arms stay at 0.297 (random baseline 0.25) while the classical positive control reaches 0.594. No quantum-vs-classical comparison, paired CI, or Holm claim is made; A2/A3 long runs remain unstarted pending a budget/memory window.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added
