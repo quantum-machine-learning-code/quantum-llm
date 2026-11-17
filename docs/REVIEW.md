@@ -1261,17 +1261,25 @@ detach 使梯度跨步穿过量子线路、提供 `step()/generate()` 与同接�
 `verdict.functional_state_use` 把这两层显式分开，避免把 P1–P4 通过误读成
 「装置已可用」。归档的 `claims_forbidden` 明确列出禁止写法（优劣判断、
 准确率差值、配对 CI、Holm 后显著数、任何需要 ≥5 seed 的结论）。
+判定阈值也已公开并写进 `verdict.functional_state_use.criterion`：
+**末位 acc > 随机基线 `0.25` + `0.10`** 才算越过基线（`RECALL_ABOVE_BASELINE_MARGIN`，
+装置标定用的显式判据，**不是**统计显著检验；本 pilot 只有 2 seed）。
 
 **成本与内存**：量子 `T=4/8/16` 每步 `0.0863 / 0.1936 / 0.3881 s`，
 经典 `0.0042 / 0.0043 / 0.0081 s`；`T=8` 外推 2000 步约 `0.11 h/seed`。
-单进程峰值工作集实测 `333 MB`（基线 `321 MB`），运行当时可用物理内存
+单进程峰值工作集实测 `332.7 MB`（基线 `321.3 MB`），运行当时可用物理内存
 仅 `2.58 GB / 31.2 GB`，未叠加其它多进程任务，统一 `OMP=MKL=1`。
+该数字最初由独立探针补测写入归档（正式运行时 `psutil` 不可用），现已
+由 `recurrent_pilot.py --probe-memory` 固化成可复现命令；同命令在新进程
+复测 `334.8 MB`（基线 `323.6 MB`），差 2.1 MB 属进程基线波动，两次读数
+都记录在 `runtime.memory_probe`，不改写历史数值。
 
 **仍未做**：A2（同接口经典替身的同构对照）、A3（容量匹配）、`Q/T` 扫描、
 ≥5 seed 与配对 CI/Holm、L2 隐量子态延续、shots/噪声。这些都是长训练，
 需先确认预算与内存窗口。本 pilot 不改变 §14 的任何结论口径。
 
 图与归档可用 `--recompute-from` / `--redraw-from` 在不重跑训练的前提下
-重算 verdict 与重画；契约测试 `check_recurrent_pilot()` 校验单变量消融、
-P1–P4 数值、语料重叠率与结论边界。
+重算 verdict 与重画（可加 `--out <目录>` 隔离输出，避免误覆盖正式图）；
+`--probe-memory` 只复测内存、不训练不写文件。契约测试
+`check_recurrent_pilot()` 校验单变量消融、P1–P4 数值、语料重叠率与结论边界。
 

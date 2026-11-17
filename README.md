@@ -542,14 +542,18 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 
 **但功能有效性没有被证明**：延迟回忆上量子开/关都停在 `0.297`（≈基线），
 只有经典正对照到 `0.594`（反馈增益 `+0.297`），量子反馈增益为 `0`。
+「是否学会」的判据写在归档 `verdict.functional_state_use.criterion`：
+**末位 acc 需超过随机基线 `0.25 + 0.10`**（装置标定的显式阈值，不是统计显著检验；
+本 pilot 只有 2 seed，不做任何显著性判断）。
 这只能读作「本短预算下量子循环没学会用状态」，**不能**推出「量子循环不能
 记忆」（步数/容量/参数化都没扫），也**不能**推出「经典更好」（两臂预算、
 容量、参数化都未对齐）。结构上有资格 ≠ 状态被用上，这两层必须分开。
 
 成本（单进程，`OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`）：量子每步
 `T=4/8/16` = `0.086 / 0.194 / 0.388 s`，经典 `0.0042 / 0.0043 / 0.0081 s`；
-`T=8` 外推 2000 步约 **`0.11 h/seed`**。实测单进程峰值工作集 **333 MB**
-（运行当时可用物理内存仅 2.58 GB / 31.2 GB，没有叠加其它训练任务）。
+`T=8` 外推 2000 步约 **`0.11 h/seed`**。实测单进程峰值工作集 **约 333 MB**
+（`332.7 MB`，`--probe-memory` 在新进程复测 `334.8 MB`，差 2.1 MB 属基线波动；
+运行当时可用物理内存仅 2.58 GB / 31.2 GB，没有叠加其它训练任务）。
 
 **图怎么读**：(a) 对数轴下「开反馈」柱高、「关反馈」严格贴 0，是 P1/P2 的
 单变量证据；(b) 四条 loss 曲线全部下降、灰虚线是均匀基线，只说明装置没塌；
@@ -562,7 +566,13 @@ out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
 # 改结论口径 / 改图版式时不要重跑训练
 .venv/bin/python experiments/recurrent_pilot.py --recompute-from docs/recurrent_pilot.json
 .venv/bin/python experiments/recurrent_pilot.py --redraw-from docs/recurrent_pilot.json
+# 复测归档里的单进程峰值工作集（不训练、不写文件）
+.venv/bin/python experiments/recurrent_pilot.py --probe-memory
 ```
+
+> 命令按 WSL / Linux 写；Windows 侧把 `.venv/bin/python` 换成
+> 工作区根的 `.venv/Scripts/python.exe`。重画可加 `--out <目录>` 隔离输出，
+> 避免误覆盖 `docs/figures/` 的正式图。
 
 **下一步（本轮未启动）**：A2/A3 同构对照（≥5 seed、配对 CI、Holm）与 L2
 隐量子态延续都是长训练，需另行确认预算与内存窗口；在此之前不写下任何

@@ -30,6 +30,7 @@
 用法：
     python experiments/recurrent_pilot.py --quick            # 冒烟，产物写 results/
     python experiments/recurrent_pilot.py                    # 正式短 pilot，写 docs/
+    python experiments/recurrent_pilot.py --probe-memory     # 只复测单进程峰值工作集
     python experiments/recurrent_pilot.py --recompute-from docs/recurrent_pilot.json
     python experiments/recurrent_pilot.py --redraw-from docs/recurrent_pilot.json
 """
@@ -66,6 +67,9 @@ DOCS = ROOT / "docs"
 RESULTS = ROOT / "results"
 OUT_NAME = "recurrent_pilot"
 FIG_NAME = "recurrent_pilot.png"
+# 「延迟回忆是否学会」的判定margin：末位 acc 需超过随机基线 + 0.10。
+# 该阈值是装置标定用的显式判据，不是统计显著阈值（本 pilot 只有 2 seed）。
+RECALL_ABOVE_BASELINE_MARGIN = 0.10
 
 # A0 / A1 是同一量子模型的状态消融；经典两臂仅作装置有效性正对照。
 ARMS = {
@@ -369,6 +373,40 @@ def _peak_rss_mb() -> float | None:
     return None
 
 
+def build_memory_probe(vocab_size: int = 29, batch: int = 8,
+                       seq_len: int = 8, steps: int = 3) -> dict | None:
+    """独立复测单进程峰值工作集（MB），供 ``runtime.memory_probe`` 复现。
+
+    与正式 pilot 同形状（四臂各若干步前向 + 反向），只回答「这套配置占多少
+    内存」；不训练、不写文件、不产生任何结论。Windows 无 psutil 时走
+    ``GetProcessMemoryInfo``。进程峰值只增不减，因此基线必须在建模前读取。
+    """
+    baseline = _peak_rss_mb()
+    g = torch.Generator().manual_seed(3)
+    idx = torch.randint(0, vocab_size, (batch, seq_len), generator=g)
+    for name in ARMS:
+        model = build_arm(name, vocab_size, 0)
+        model.train()
+        for _ in range(steps):
+            logits = model(idx)
+            loss = F.cross_entropy(
+                logits[:, :-1].reshape(-1, vocab_size),
+                idx[:, 1:].reshape(-1))
+            loss.backward()
+            model.zero_grad(set_to_none=True)
+    peak = _peak_rss_mb()
+    if baseline is None or peak is None:
+        return None
+    return {
+        "baseline_peak_mb": round(baseline, 1),
+        "peak_working_set_mb": round(peak, 1),
+        "config": (f"{len(ARMS)} 臂各 {steps} 步前向+反向，B={batch}/T={seq_len}，"
+                   "单进程，OMP=MKL=1"),
+        "reproduce": "python experiments/recurrent_pilot.py --probe-memory",
+        "note": "进程峰值工作集（Windows GetProcessMemoryInfo / psutil），含 torch+pennylane 基线。",
+    }
+
+
 def build_verdict(report: dict) -> dict:
     """只判装置有效性，不判优劣；结论措辞必须能挡住误读。"""
     qc = report["contracts"]["A0_quantum_feedback"]
@@ -409,11 +447,16 @@ def build_verdict(report: dict) -> dict:
     # 关键区分：P1–P4 是「结构上有无资格」，功能有效性是「状态真的被用上」。
     # 两者不能混为一谈；量子臂停在基线不等于架构不行，只是本预算未证明。
     functional = {
-        "quantum_above_baseline": bool(recall_q_on > recall_base + 0.10),
+        "criterion": (
+            f"末位 acc > 随机基线 {recall_base:.2f} + "
+            f"{RECALL_ABOVE_BASELINE_MARGIN:.2f}（装置标定判据，非统计显著检验）"
+        ),
+        "quantum_above_baseline": bool(
+            recall_q_on > recall_base + RECALL_ABOVE_BASELINE_MARGIN),
         "quantum_feedback_gain": recall_q_on - recall_q_off,
         "classical_feedback_gain": recall_ctrl - recall_c_off,
         "classical_positive_control_above_baseline": bool(
-            recall_ctrl > recall_base + 0.10),
+            recall_ctrl > recall_base + RECALL_ABOVE_BASELINE_MARGIN),
         "quantum_accuracy": recall_q_on,
         "quantum_no_feedback_accuracy": recall_q_off,
         "classical_accuracy": recall_ctrl,
@@ -776,7 +819,13 @@ def main() -> None:
                     help="只从既有 JSON 重画图，不重跑训练")
     ap.add_argument("--recompute-from", default=None,
                     help="从既有 JSON 重算 verdict 并重画图，不重跑训练")
+    ap.add_argument("--probe-memory", action="store_true",
+                    help="只复测单进程峰值工作集并打印 JSON，不训练、不写文件")
     args = ap.parse_args()
+
+    if args.probe_memory:
+        print(json.dumps(build_memory_probe(), ensure_ascii=False, indent=2))
+        return
 
     if args.redraw_from or args.recompute_from:
         raw = args.recompute_from or args.redraw_from
@@ -789,7 +838,9 @@ def main() -> None:
             src.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
             print(f"  verdict recomputed: {src}", flush=True)
-        fig = DOCS / "figures" / FIG_NAME
+        # --out 可把重画结果隔离到临时目录，避免误覆盖正式图。
+        fig = (Path(args.out) / "figures" / FIG_NAME if args.out
+               else DOCS / "figures" / FIG_NAME)
         _figure(report, fig)
         print(f"  figure: {fig}", flush=True)
         return

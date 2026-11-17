@@ -786,8 +786,15 @@
       "baseline_peak_mb": 321.3,
       "peak_working_set_mb": 332.7,
       "config": "4 臂各 3 步前向+反向，B=8/T=8，单进程，OMP=MKL=1",
-      "note": "独立探针（Windows GetProcessMemoryInfo）；正式 pilot 运行时 psutil 不可用故归档为 null，此值为同等配置的补测。",
-      "available_physical_gb_at_run": 2.58
+      "note": "首次为独立探针（正式 pilot 运行时 psutil 不可用故归档为 null）；数值现由 --probe-memory 复现，recheck 为复测值，available_physical_gb_at_run 是当时的机器窗口。",
+      "available_physical_gb_at_run": 2.58,
+      "reproduce": "python experiments/recurrent_pilot.py --probe-memory",
+      "recheck": {
+        "baseline_peak_mb": 323.6,
+        "peak_working_set_mb": 334.8,
+        "date": "2026-11-17",
+        "note": "同命令在新进程复测；与首次 332.7 MB 相差 2.1 MB，属进程基线波动。"
+      }
     }
   },
   "scope": "探索性短预算 pilot；不是性能对照实验",
@@ -804,6 +811,7 @@
     },
     "all_contracts_pass": true,
     "functional_state_use": {
+      "criterion": "末位 acc > 随机基线 0.25 + 0.10（装置标定判据，非统计显著检验）",
       "quantum_above_baseline": false,
       "quantum_feedback_gain": 0.0,
       "classical_feedback_gain": 0.296875,

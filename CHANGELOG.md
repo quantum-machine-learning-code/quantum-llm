@@ -12,6 +12,11 @@ All notable changes to `quantum-llm` will be documented in this file.
 ### Notes
 - **P1-P4 structural contracts pass 4/4**; disabling state feedback zeroes prefix sensitivity and cross-step gradients exactly. **Functional state use is NOT demonstrated**: on delayed recall both quantum arms stay at 0.297 (random baseline 0.25) while the classical positive control reaches 0.594. No quantum-vs-classical comparison, paired CI, or Holm claim is made; A2/A3 long runs remain unstarted pending a budget/memory window.
 
+### Cleanup (post-pilot audit)
+- Published the delayed-recall criterion (`last-token acc > 0.25 + 0.10`; a device-calibration threshold, **not** a significance test) in `verdict.functional_state_use.criterion`.
+- Made the peak working-set number reproducible: `--probe-memory` rechecks it in a fresh process (334.8 MB vs 332.7 MB at run time, 2.1 MB baseline drift), and `runtime.memory_probe` records both readings plus the reproduce command. No hand-written metric patches remain.
+- `--recompute-from` / `--redraw-from` now honour `--out`, so a redraw cannot silently overwrite the committed figure; removed quick-mode smoke artifacts from `results/` (gitignored and regenerable).
+
 ## [0.2.0] - 2026-11-14
 
 ### Added

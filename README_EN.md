@@ -81,7 +81,10 @@ At current hardware and state-vector simulator limits ($2^n$ state dimension), b
 > task both quantum arms stay at `0.297` (random baseline `0.25`) while the
 > classical positive control reaches `0.594`. This is a device calibration, not
 > an effect comparison — no quantum-vs-classical claim, paired CI, or Holm
-> significance is reported. See `docs/recurrent_pilot.json` and
+> significance is reported. The "learned" threshold is explicit in the archive:
+> last-token acc > 0.25 + 0.10 (device calibration, **not** a significance test).
+> Peak memory is reproducible with `--probe-memory` (332.7 MB at run time,
+> 334.8 MB recheck). See `docs/recurrent_pilot.json` and
 > `docs/figures/recurrent_pilot.png`; README section 1f has the full table.
 
 ## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
