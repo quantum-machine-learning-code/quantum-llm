@@ -155,6 +155,7 @@ def _build_pair(
         context_window=args.context_window,
         observables=args.observables,
         pre_scale=args.pre_scale,
+        near_identity_init=args.near_identity_init,
         scale=scale_val,
         head=args.head,
         classical_width=rdim,

@@ -267,7 +267,25 @@ def iter_batches(
 
 
 def answer_logits(model: torch.nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """取最后位置的 logits 并裁到 112 个数字类，返回 (B, 112)。"""
+    """取最后位置的 logits 并裁到 112 个数字类，返回 (B, 112)。
+
+    对 ``TinyLM`` / ``RichQuantumLM`` 这类逐位置 ``transform`` 模型，只对末位
+    因果特征 ``h[:, -1, :]`` 执行一次 ``transform``（跳过丢弃的 ``t=0..T-2``），
+    数值与 ``model(x)[:, -1, :112]`` 逐位等价但省去 75% 无效 QNode 计算。
+    """
+    if (
+        hasattr(model, "encode_context")
+        and hasattr(model, "transform")
+        and hasattr(model, "head")
+        and hasattr(model, "out_scale")
+    ):
+        h_last = model.encode_context(x)[:, -1, :]  # (B, Q)
+        z = model.transform(h_last).to(torch.float32)
+        norm = getattr(model, "readout_norm", None)
+        if norm is not None:
+            z = norm(z)
+        logits_last = model.head(z * model.out_scale)  # (B, V)
+        return logits_last[:, :N_NUMBER_TOKENS]
     logits = model(x)  # (B, T, V)
     return logits[:, -1, :N_NUMBER_TOKENS]
 

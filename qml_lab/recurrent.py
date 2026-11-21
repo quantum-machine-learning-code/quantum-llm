@@ -42,26 +42,48 @@ from torch import nn
 __all__ = ["QuantumRecurrentLM", "ClassicalRecurrentLM", "make_recurrent_qnode"]
 
 
-def make_recurrent_qnode(n_qubits: int):
+def make_recurrent_qnode(
+    n_qubits: int,
+    state_feedback: str = "rz",
+    readout_basis: str = "y",
+):
     """构造带状态重上传的批量 QNode；权重作为参数传入，不闭包在模型里。
 
-    ``x_ang`` / ``s_ang`` 形状均为 ``(B, Q)``，``weights`` 为 ``(L, Q, 3)``。
-    返回 list of ``(B,)`` torch 张量，调用方用 ``torch.stack(..., dim=-1)``
-    还原成 ``(B, Q)``；PennyLane 0.45 下直接 ``qml.math.stack`` 会退回
-    pennylane.numpy.tensor 并破坏 torch autograd，故在 QNode 外部 stack。
+    * ``state_feedback``: ``"rz"``（非对易相位反馈）或 ``"ry"``（同轴角度反馈）；
+    * ``readout_basis``: ``"z"`` / ``"x"`` / ``"y"`` / ``"xyz"``。
+      默认 ``rz + y``：``RY(x)|0>`` 落在 XZ 平面，``RZ(s)`` 产生 ``<Y> = sin(x)sin(s)``，
+      即使 ``s=0, w=0`` 一阶导数仍非零，彻底修复旧版 ``rz + z`` 的死通道问题。
     """
+    fb = str(state_feedback).lower()
+    if fb not in ("rz", "ry"):
+        raise ValueError(f"未知 state_feedback {state_feedback!r}，可选 'rz' / 'ry'")
+    rb = str(readout_basis).lower()
+    if rb not in ("z", "x", "y", "xyz"):
+        raise ValueError(f"未知 readout_basis {readout_basis!r}，可选 'z' / 'x' / 'y' / 'xyz'")
+
     dev = qml.device("default.qubit", wires=n_qubits)
+    fb_gate = qml.RZ if fb == "rz" else qml.RY
+    if rb == "z":
+        obs = [qml.PauliZ(i) for i in range(n_qubits)]
+    elif rb == "x":
+        obs = [qml.PauliX(i) for i in range(n_qubits)]
+    elif rb == "y":
+        obs = [qml.PauliY(i) for i in range(n_qubits)]
+    else:
+        obs = (
+            [qml.PauliZ(i) for i in range(n_qubits)]
+            + [qml.PauliX(i) for i in range(n_qubits)]
+            + [qml.PauliY(i) for i in range(n_qubits)]
+        )
 
     @qml.qnode(dev, interface="torch", diff_method="backprop")
     def circuit(x_ang: torch.Tensor, s_ang: torch.Tensor,
                 weights: torch.Tensor):
         qml.AngleEmbedding(x_ang, wires=range(n_qubits), rotation="Y")
-        # 上一步测量期望作为相位反馈；RZ 与 RY 不交换，之后的纠缠层
-        # 才能把相位信息转成可测的 Z 期望（纯角度相加会退化成线性偏置）。
         for i in range(n_qubits):
-            qml.RZ(s_ang[:, i], wires=i)
+            fb_gate(s_ang[:, i], wires=i)
         qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
-        return [qml.expval(qml.PauliZ(i)) for i in range(n_qubits)]
+        return [qml.expval(op) for op in obs]
 
     return circuit
 
@@ -71,15 +93,17 @@ class _RecurrentBase(nn.Module):
 
     def __init__(self, vocab_size: int, state_dim: int = 4,
                  embed_dim: int = 16, hidden: int = 32,
-                 feedback: bool = True, learnable_init: bool = False):
+                 feedback: bool = True, learnable_init: bool = False,
+                 readout_dim: int | None = None):
         super().__init__()
         self.vocab_size = int(vocab_size)
         self.state_dim = int(state_dim)
+        self.readout_dim = int(readout_dim) if readout_dim is not None else int(state_dim)
         self.embed_dim = int(embed_dim)
         self.feedback = bool(feedback)
         self.embed = nn.Embedding(self.vocab_size, self.embed_dim)
         self.head = nn.Sequential(
-            nn.Linear(self.state_dim, hidden),
+            nn.Linear(self.readout_dim, hidden),
             nn.GELU(),
             nn.Linear(hidden, self.vocab_size),
         )
@@ -106,46 +130,74 @@ class _RecurrentBase(nn.Module):
         return torch.stack(out, dim=1)
 
     @torch.no_grad()
-    def generate(self, prefix: torch.Tensor, n_new: int,
-                 temperature: float = 1.0) -> torch.Tensor:
-        """逐步自回归生成：每步取 argmax 拼回输入，再推进状态。"""
+    def generate(
+        self,
+        prefix: torch.Tensor,
+        n_new: int,
+        temperature: float = 1.0,
+        *,
+        greedy: bool = True,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        """逐步自回归生成：精确推进 prefix 状态，不再重复送入末位 prefix token。
+
+        * ``greedy=True`` 或 ``temperature <= 0``：确定性贪心 argmax，
+          保证 ``generate(prefix, 1, greedy=True)[:, -1] == forward(prefix)[:, -1].argmax(-1)``；
+        * ``greedy=False`` 且 ``temperature > 0``：按 ``softmax(logits / temperature)`` 多项采样。
+        """
         self.eval()
         cur = prefix.clone()
+        if n_new <= 0:
+            return cur
         state = self.initial_state(cur.shape[0], cur.device)
-        # 先跑完 prefix，建立状态
+        logits_t: torch.Tensor | None = None
         for t in range(cur.shape[1]):
-            _, state = self.step(cur[:, t], state)
-        for _ in range(n_new):
-            logits_t, state = self.step(cur[:, -1], state)
-            probs = (logits_t / max(temperature, 1e-6)).softmax(-1)
-            nxt = probs.argmax(-1, keepdim=True)
+            logits_t, state = self.step(cur[:, t], state)
+        assert logits_t is not None, "prefix 长度必须 >= 1"
+        for step_i in range(int(n_new)):
+            if greedy or temperature <= 0.0:
+                nxt = logits_t.argmax(dim=-1, keepdim=True)
+            else:
+                probs = (logits_t / float(temperature)).softmax(dim=-1)
+                nxt = torch.multinomial(probs, num_samples=1, generator=generator)
             cur = torch.cat([cur, nxt], dim=1)
+            if step_i + 1 < int(n_new):
+                logits_t, state = self.step(nxt.squeeze(-1), state)
         return cur
 
 
 class QuantumRecurrentLM(_RecurrentBase):
-    """L1：测量反馈型量子循环语言模型。
+    """L1：测量反馈型量子循环语言模型（状态为经典测量期望，非 L2 持久量子态）。
 
-    线路权重 ``(n_layers, Q, 3)`` 是可训练参数；``feedback=False`` 时把
-    状态角度置零，退化为逐位置独立的 L0 量子变换，用于状态消融。
+    默认 ``state_feedback="rz", readout_basis="y", init_std=0.5`` 修复了旧版
+    ``rz + z + init_std=0.05`` 状态通道在初始化附近被压制 ~163× 的结构缺陷。
     """
 
     def __init__(self, vocab_size: int, n_qubits: int = 4, n_layers: int = 1,
                  embed_dim: int = 16, hidden: int = 32, feedback: bool = True,
-                 learnable_init: bool = False, init_std: float = 0.05,
-                 detach_state: bool = False):
+                 learnable_init: bool = False, init_std: float = 1.0,
+                 detach_state: bool = False, state_feedback: str = "rz",
+                 readout_basis: str = "y"):
+        rb = str(readout_basis).lower()
+        rdim = 3 * int(n_qubits) if rb == "xyz" else int(n_qubits)
         super().__init__(vocab_size, state_dim=n_qubits, embed_dim=embed_dim,
                          hidden=hidden, feedback=feedback,
-                         learnable_init=learnable_init)
+                         learnable_init=learnable_init, readout_dim=rdim)
         self.n_qubits = int(n_qubits)
         self.n_layers = int(n_layers)
-        self.detach_state = bool(detach_state)  # True = 截断 BPTT，省内存
+        self.detach_state = bool(detach_state)  # True = 截断 BPTT（仅截断传向下一步的状态）
+        self.state_feedback = str(state_feedback).lower()
+        self.readout_basis = rb
         self.input_proj = nn.Linear(self.embed_dim, self.n_qubits)
         self.weights = nn.Parameter(
             torch.empty(self.n_layers, self.n_qubits, 3)
         )
-        nn.init.normal_(self.weights, std=init_std)
-        self.qnode = make_recurrent_qnode(self.n_qubits)
+        nn.init.normal_(self.weights, std=float(init_std))
+        self.qnode = make_recurrent_qnode(
+            self.n_qubits,
+            state_feedback=self.state_feedback,
+            readout_basis=self.readout_basis,
+        )
 
     def step(self, idx_t: torch.Tensor, state: torch.Tensor):
         h = self.embed(idx_t)                                   # (B, E)
@@ -154,10 +206,21 @@ class QuantumRecurrentLM(_RecurrentBase):
                  * (math.pi / 2))
         raw = self.qnode(x_ang, s_ang, self.weights)
         # PennyLane 默认 float64；cast 保留 autograd 链，与 head 的 float32 对齐
-        new_state = torch.stack(list(raw), dim=-1).to(torch.float32)  # (B, Q)
-        if self.detach_state:
-            new_state = new_state.detach()
-        return self.head(new_state), new_state
+        readout = torch.stack(list(raw), dim=-1).to(torch.float32)  # (B, rdim)
+        if self.readout_basis == "xyz":
+            # rz 相位反馈对 Y 基一阶敏感；ry 同轴反馈对 Z 基一阶敏感
+            new_state = (
+                readout[:, 2 * self.n_qubits :]
+                if self.state_feedback == "rz"
+                else readout[:, : self.n_qubits]
+            )
+        else:
+            new_state = readout
+        logits = self.head(readout)
+        # 截断 BPTT：必须在 head(readout) 之后再 detach 传向 t+1 的状态，
+        # 否则当前步 t 的 embed / input_proj / weights 将全部失去梯度！
+        next_state = new_state.detach() if self.detach_state else new_state
+        return logits, next_state
 
 
 class ClassicalRecurrentLM(_RecurrentBase):
@@ -179,6 +242,6 @@ class ClassicalRecurrentLM(_RecurrentBase):
         h = self.embed(idx_t)                                   # (B, E)
         s_in = state if self.feedback else torch.zeros_like(state)
         new_state = self.cell(h, s_in)                          # (B, Q), 含 tanh
-        if self.detach_state:
-            new_state = new_state.detach()
-        return self.head(new_state), new_state
+        logits = self.head(new_state)
+        next_state = new_state.detach() if self.detach_state else new_state
+        return logits, next_state

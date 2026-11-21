@@ -1,12 +1,15 @@
 {
-  "scope": "解析/数值梯度诊断；无训练、无准确率、无显著性检验",
-  "question": "L1 的状态相位反馈在 Z 读出下是否被结构性压制？",
+  "scope": "解析/数值梯度诊断（含 Z/X/Y 三基与 s=0 真实初态）；无训练、无准确率结论",
+  "question": "L1 的 RZ 相位反馈在 Z / X / Y 读出基与真实初态 s=0 下的敏感度对比",
   "config": {
     "n_qubits": 4,
     "n_layers": 1,
     "n_random_inputs": 8,
-    "input_range": "uniform(-π/2, π/2)，与 recurrent.py 的 tanh 编码一致",
-    "state_range": "N(0, 0.1)",
+    "input_range": "uniform(-pi/2, pi/2)，与 recurrent.py 的 tanh 编码一致",
+    "state_regimes": {
+      "s_random": "N(0, 0.1)",
+      "s_zero": "exact zeros (actual t=1 init_state)"
+    },
     "seed": 20261117,
     "weight_scales": [
       0.0,
@@ -14,20 +17,22 @@
       0.2,
       0.5
     ],
-    "default_init_std_in_recurrent_py": 0.05
+    "legacy_init_std": 0.05,
+    "fixed_default_init_std": 1.0
   },
   "configurations": {
-    "RZ_feedback_Z_readout": "L1 现状：RZ 相位反馈 + expval(Z)",
-    "RZ_feedback_X_readout": "只换读出基到 expval(X)，状态编码不变",
-    "RY_feedback_Z_readout": "只把状态门换成 RY（与输入同轴），读出不变"
+    "RZ_feedback_Z_readout": "旧版 L1：RZ 相位反馈 + expval(Z)（死通道）",
+    "RZ_feedback_X_readout": "只换到 expval(X)：s=0,w=0 时 d(cos s)/ds = 0 仍为零",
+    "RZ_feedback_Y_readout": "共轭读出 expval(Y)：s=0,w=0 时 d(sin s)/ds = 1 保持 O(1) 敏感度",
+    "RY_feedback_Z_readout": "同轴 RY 状态门 + expval(Z)（对照上界）"
   },
   "measurements": [
     {
       "init_std": 0.0,
       "configs": {
         "RZ_feedback_Z_readout": {
-          "mean_abs_grad": 2.289311851200182e-09,
-          "rms_grad": 4.084557581052195e-09,
+          "mean_abs_grad": 2.0564812075463124e-09,
+          "rms_grad": 3.866379216788118e-09,
           "max_abs_grad": 1.4901161193847656e-08
         },
         "RZ_feedback_X_readout": {
@@ -35,14 +40,21 @@
           "rms_grad": 0.0796874389052391,
           "max_abs_grad": 0.3690740466117859
         },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.11351408064365387,
+          "rms_grad": 0.2316415011882782,
+          "max_abs_grad": 0.8505642414093018
+        },
         "RY_feedback_Z_readout": {
           "mean_abs_grad": 0.8388712406158447,
           "rms_grad": 1.1899960041046143,
           "max_abs_grad": 3.711186170578003
         }
       },
-      "ratio_rz_z_over_ry_z": 2.729038427303239e-09,
-      "ratio_rz_x_over_rz_z": 18019270.791875653
+      "ratio_rz_z_over_ry_z": 2.451486125613959e-09,
+      "ratio_rz_x_over_rz_z": 20059376.191939853,
+      "ratio_rz_y_over_rz_z": 55198209.5567472,
+      "ratio_rz_y_over_rz_x": 2.751741082503185
     },
     {
       "init_std": 0.05,
@@ -57,6 +69,11 @@
           "rms_grad": 0.06136131286621094,
           "max_abs_grad": 0.2091885507106781
         },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.1093393936753273,
+          "rms_grad": 0.22531245648860931,
+          "max_abs_grad": 0.8421928286552429
+        },
         "RY_feedback_Z_readout": {
           "mean_abs_grad": 0.8476253151893616,
           "rms_grad": 1.218579888343811,
@@ -64,7 +81,9 @@
         }
       },
       "ratio_rz_z_over_ry_z": 0.006134992129130914,
-      "ratio_rz_x_over_rz_z": 7.813054017581705
+      "ratio_rz_x_over_rz_z": 7.813054017581705,
+      "ratio_rz_y_over_rz_z": 21.026100334100754,
+      "ratio_rz_y_over_rz_x": 2.6911500018796426
     },
     {
       "init_std": 0.2,
@@ -79,6 +98,11 @@
           "rms_grad": 0.1756686121225357,
           "max_abs_grad": 0.698438823223114
         },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.10346589237451553,
+          "rms_grad": 0.19264614582061768,
+          "max_abs_grad": 0.6934421062469482
+        },
         "RY_feedback_Z_readout": {
           "mean_abs_grad": 0.8301723003387451,
           "rms_grad": 1.2115014791488647,
@@ -86,7 +110,9 @@
         }
       },
       "ratio_rz_z_over_ry_z": 0.020957319367201847,
-      "ratio_rz_x_over_rz_z": 5.2975643910763575
+      "ratio_rz_x_over_rz_z": 5.2975643910763575,
+      "ratio_rz_y_over_rz_z": 5.946935629264992,
+      "ratio_rz_y_over_rz_x": 1.1225792062636346
     },
     {
       "init_std": 0.5,
@@ -101,6 +127,11 @@
           "rms_grad": 0.1945035755634308,
           "max_abs_grad": 0.6223628520965576
         },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.1185215413570404,
+          "rms_grad": 0.1783660650253296,
+          "max_abs_grad": 0.4903956353664398
+        },
         "RY_feedback_Z_readout": {
           "mean_abs_grad": 0.502976655960083,
           "rms_grad": 0.7619081139564514,
@@ -108,25 +139,144 @@
         }
       },
       "ratio_rz_z_over_ry_z": 0.18871829312341412,
-      "ratio_rz_x_over_rz_z": 1.3721098954974098
+      "ratio_rz_x_over_rz_z": 1.3721098954974098,
+      "ratio_rz_y_over_rz_z": 1.248634877665871,
+      "ratio_rz_y_over_rz_x": 0.9100108393382169
+    }
+  ],
+  "measurements_at_init_zero": [
+    {
+      "init_std": 0.0,
+      "configs": {
+        "RZ_feedback_Z_readout": {
+          "mean_abs_grad": 0.0,
+          "rms_grad": 0.0,
+          "max_abs_grad": 0.0
+        },
+        "RZ_feedback_X_readout": {
+          "mean_abs_grad": 0.0,
+          "rms_grad": 0.0,
+          "max_abs_grad": 0.0
+        },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.1139790341258049,
+          "rms_grad": 0.23627431690692902,
+          "max_abs_grad": 0.8749119639396667
+        },
+        "RY_feedback_Z_readout": {
+          "mean_abs_grad": 0.7950855493545532,
+          "rms_grad": 1.1401829719543457,
+          "max_abs_grad": 3.4641852378845215
+        }
+      },
+      "ratio_rz_z_over_ry_z": 0.0,
+      "ratio_rz_x_over_rz_z": null,
+      "ratio_rz_y_over_rz_z": null,
+      "ratio_rz_y_over_rz_x": null
+    },
+    {
+      "init_std": 0.05,
+      "configs": {
+        "RZ_feedback_Z_readout": {
+          "mean_abs_grad": 0.0018373464699834585,
+          "rms_grad": 0.0028422134928405285,
+          "max_abs_grad": 0.008414849638938904
+        },
+        "RZ_feedback_X_readout": {
+          "mean_abs_grad": 0.04276452586054802,
+          "rms_grad": 0.06119546666741371,
+          "max_abs_grad": 0.17016829550266266
+        },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.1083814799785614,
+          "rms_grad": 0.2283102571964264,
+          "max_abs_grad": 0.8498784899711609
+        },
+        "RY_feedback_Z_readout": {
+          "mean_abs_grad": 0.7997949719429016,
+          "rms_grad": 1.1682664155960083,
+          "max_abs_grad": 3.616926670074463
+        }
+      },
+      "ratio_rz_z_over_ry_z": 0.002297271843957815,
+      "ratio_rz_x_over_rz_z": 23.27515607926306,
+      "ratio_rz_y_over_rz_z": 58.98804702824348,
+      "ratio_rz_y_over_rz_x": 2.5343781509933128
+    },
+    {
+      "init_std": 0.2,
+      "configs": {
+        "RZ_feedback_Z_readout": {
+          "mean_abs_grad": 0.01653144508600235,
+          "rms_grad": 0.025680989027023315,
+          "max_abs_grad": 0.08741289377212524
+        },
+        "RZ_feedback_X_readout": {
+          "mean_abs_grad": 0.08418767899274826,
+          "rms_grad": 0.15654702484607697,
+          "max_abs_grad": 0.5448631644248962
+        },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.10701659321784973,
+          "rms_grad": 0.19996502995491028,
+          "max_abs_grad": 0.7499407529830933
+        },
+        "RY_feedback_Z_readout": {
+          "mean_abs_grad": 0.7831414341926575,
+          "rms_grad": 1.1587295532226562,
+          "max_abs_grad": 3.5391364097595215
+        }
+      },
+      "ratio_rz_z_over_ry_z": 0.02110914371813906,
+      "ratio_rz_x_over_rz_z": 5.092578329043502,
+      "ratio_rz_y_over_rz_z": 6.4735171463300425,
+      "ratio_rz_y_over_rz_x": 1.2711669272539026
+    },
+    {
+      "init_std": 0.5,
+      "configs": {
+        "RZ_feedback_Z_readout": {
+          "mean_abs_grad": 0.08608400076627731,
+          "rms_grad": 0.18099430203437805,
+          "max_abs_grad": 0.7047280669212341
+        },
+        "RZ_feedback_X_readout": {
+          "mean_abs_grad": 0.13684898614883423,
+          "rms_grad": 0.20860256254673004,
+          "max_abs_grad": 0.7682174444198608
+        },
+        "RZ_feedback_Y_readout": {
+          "mean_abs_grad": 0.12424494326114655,
+          "rms_grad": 0.1868860274553299,
+          "max_abs_grad": 0.539876401424408
+        },
+        "RY_feedback_Z_readout": {
+          "mean_abs_grad": 0.5023807883262634,
+          "rms_grad": 0.7993988990783691,
+          "max_abs_grad": 2.243443012237549
+        }
+      },
+      "ratio_rz_z_over_ry_z": 0.17135209539575663,
+      "ratio_rz_x_over_rz_z": 1.5897145222186708,
+      "ratio_rz_y_over_rz_z": 1.4432988959060842,
+      "ratio_rz_y_over_rz_x": 0.9078981639368539
     }
   ],
   "findings": [
-    "纠缠层权重为 0 时，RZ+Z 的 |∂Z/∂s| = 2.289e-09（数值残差级），符合「Z 基下局部相位不改变振幅模方」的解析预期：相位只能靠后续非对易旋转转成可测振幅。",
-    "默认初始化 init_std=0.05 下，RZ+Z 相对 RY+Z 被压制 163 倍（5.200e-03 vs 8.476e-01）；这与 pilot 里量子臂 P1 前缀敏感度 1.117e-3 远小于经典 3.818e-2 同向。",
-    "同状态下把读出换成 expval(X)，即使权重为 0 也能直接看到相位，说明「改读出基」比「先延长训练」是更便宜、可单变量检验的下一步。"
+    "在真实初始状态 s=0 且 w=0 时：RZ+Z = 0.000e+00、RZ+X = 0.000e+00（两者解析导数均恒为 0），而共轭基 RZ+Y = 1.140e-01（一阶非零，验证 <Y>=sin(x)sin(s) 机制）。",
+    "在 s~N(0,0.1)、旧版 init_std=0.05 下：RZ+Z = 5.200e-03 相对 RY+Z (8.476e-01) 被压制 163 倍；RZ+Y (1.093e-01) 比 RZ+Z 强 21.0 倍、比 RZ+X (4.063e-02) 强 2.7 倍。",
+    "在 s=0、init_std=0.05 下：RZ+Z = 1.837e-03、RZ+X = 4.276e-02、RZ+Y = 1.084e-01；此外 s~N(0,0.1), w=0 时 RZ+Z = 2.056e-09（仅数值舍入残差）。"
   ],
-  "interpretation": "这给出 §16「延迟回忆反馈增益 0」的一个**可检验候选机制**：状态通路在默认初始化附近接近死通道，120 步短训练可能根本来不及把它打开。但它不改变 §16 的结论——功能有效性仍未证明；要验证这个机制，需要重训练做读出基 / 状态门的单变量 A/B，而不是靠本诊断下结论。",
+  "interpretation": "旧版 state_channel_probe 遗漏了 PauliY 共轭读出基：RY(x)|0> 位于 XZ 平面，RZ(s) 绕 Z 轴旋转首先把 Bloch 矢量推向 Y 轴，因此 s=0 时 X 与 Z 均无一阶导数，唯独 Y 读出天然非零。已据此修复 qml_lab/recurrent.py 默认配置为 RZ+Y (init_std=1.0) 并支持 RY+Z 与 XYZ 读出；实际训练效果验证见 docs/quantum_native_seq_metrics.json 的确定性延迟回忆与 S_3 基准。",
   "claims_forbidden": [
     "量子循环不能记忆 / 经典更好",
-    "换读出基就能学会延迟回忆（未重训验证）",
-    "任何准确率、CI、显著性或 ≥5 seed 的结论",
-    "把解析梯度当成训练梯度或 barren plateau 证据"
+    "仅靠解析梯度替代重训验证",
+    "把解析梯度当成 barren plateau 证据"
   ],
   "reproduce": "python experiments/state_channel_probe.py",
   "related": {
     "pilot": "docs/recurrent_pilot.json",
-    "review": "docs/REVIEW.md §16",
+    "native_benchmark": "docs/quantum_native_seq_metrics.json",
     "circuit": "qml_lab/recurrent.py:make_recurrent_qnode"
   }
 }

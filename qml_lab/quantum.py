@@ -10,8 +10,8 @@ __all__ = [
     "n_quantum_params",
     "make_observables",
     "n_readout",
+    "count_qwc_groups",
     "make_vqc_layer",
-    "make_amplitude_layer",
     "make_rich_layer",
 ]
 
@@ -77,51 +77,76 @@ def make_vqc_layer(
     )
 
 
-def make_amplitude_layer(
-    n_qubits: int = 10,
-    n_layers: int = 2,
-    diff_method: str = "backprop",
-    shots: int | None = None,
-    n_features: int = 784,
-) -> nn.Module:
-    """振幅编码层：输入 (B, n_features) 的 L2 归一化向量，输出 (B, n_qubits)。"""
-    return make_rich_layer(
-        n_qubits=n_qubits,
-        n_layers=n_layers,
-        encoding="amplitude",
-        observables="z",
-        n_features=n_features,
-        reupload=False,
-        diff_method=diff_method,
-        shots=shots,
-    )
-
-
-_READOUT_PARTS = ("z", "x", "y", "zz", "zzall", "xxall", "yyall")
+_READOUT_PARTS = (
+    "z",
+    "x",
+    "y",
+    "zz",
+    "zzall",
+    "xxall",
+    "yyall",
+    "legacy_rich24",
+    "legacy_rich48",
+)
 
 
 def make_observables(n_qubits: int, spec: str):
-    """按 ``+`` 分隔的规格构造正交可观测测量表。
+    """按 ``+`` 分隔的规格构造可观测测量表（与 ``quantum-mnist`` 对齐）。
 
+    规范对称同基规格（每家族仅含同基两体算符，整体仅需 3 个 QWC 测量基）：
     * ``z`` / ``x`` / ``y`` 各贡献 ``n`` 个单比特 Pauli 期望；
     * ``zz`` 贡献 ``n`` 个相邻环 ``Z_i Z_{i+1}`` 关联；
-    * ``zzall`` 贡献所有 ``n(n-1)`` 个含 Z 主导的有向两体正交关联（``i < j`` 的 ``Z_i Z_j`` 与 ``Z_i X_j``，共 ``2 * n(n-1)/2 = n(n-1)`` 项，区别于单向全对的 ``n(n-1)/2``）；
-    * ``xxall`` 贡献所有 ``n(n-1)`` 个含 X 主导的有向两体正交关联（``i < j`` 的 ``X_i X_j`` 与 ``X_i Y_j``）；
-    * ``yyall`` 贡献所有 ``n(n-1)`` 个含 Y 主导的有向两体正交关联（``i < j`` 的 ``Y_i Y_j`` 与 ``Y_i Z_j``）。
+    * ``zzall`` / ``xxall`` / ``yyall`` 各自贡献全部 ``n(n-1)/2`` 个同基两体关联
+      （``Z_i Z_j`` / ``X_i X_j`` / ``Y_i Y_j``，``i < j``）。
+      在 ``n_qubits = 4`` 下，``"z+x+y+zzall+xxall+yyall"`` 为 ``12 + 18 = 30`` 维、**3 个 QWC 组**。
 
-    在 ``n_qubits = 4`` 下：
-    * ``"z"`` -> 4 维
-    * ``"z+x"`` -> 8 维
-    * ``"z+x+y"`` -> 12 维
-    * ``"z+x+zz"`` -> 12 维
-    * ``"z+x+y+zz"`` -> 16 维
-    * ``"z+x+y+zzall"`` -> 24 维
-    * ``"z+x+y+zzall+xxall+yyall"`` -> 48 维（12 个单比特 ``X/Y/Z`` + 36 个有向正交两体关联，首次超过 31 维词表秩限制）
+    历史显式兼容项（仅用于复现旧归档，含跨基有向项，破坏比特置换对称性且需更多 QWC 组）：
+    * ``legacy_rich24``：``z+x+y`` (12) + ``Z_i Z_j`` + ``Z_i X_j`` (12) = 24 维（4 qubits）；
+    * ``legacy_rich48``：``z+x+y`` (12) + ``Z_i Z_j, Z_i X_j, X_i X_j, X_i Y_j, Y_i Y_j, Y_i Z_j`` (36)
+      = 48 维（4 qubits，**10 个 QWC 组**）。
     """
     parts = [p.strip().lower() for p in spec.split("+") if p.strip()]
     unknown = [p for p in parts if p not in _READOUT_PARTS]
     if unknown:
         raise ValueError(f"未知可观测量 {unknown}，可选 {_READOUT_PARTS}")
+
+    if "legacy_rich48" in parts:
+        if len(parts) > 1:
+            raise ValueError("legacy_rich48 应单独作为 observables 规格传入")
+        ops = []
+        ops.extend(qml.PauliZ(i) for i in range(n_qubits))
+        ops.extend(qml.PauliX(i) for i in range(n_qubits))
+        ops.extend(qml.PauliY(i) for i in range(n_qubits))
+        for p1, p2 in (
+            (qml.PauliZ, qml.PauliZ),
+            (qml.PauliZ, qml.PauliX),
+            (qml.PauliX, qml.PauliX),
+            (qml.PauliX, qml.PauliY),
+            (qml.PauliY, qml.PauliY),
+            (qml.PauliY, qml.PauliZ),
+        ):
+            ops.extend(
+                p1(i) @ p2(j)
+                for i in range(n_qubits)
+                for j in range(i + 1, n_qubits)
+            )
+        return ops
+
+    if "legacy_rich24" in parts:
+        if len(parts) > 1:
+            raise ValueError("legacy_rich24 应单独作为 observables 规格传入")
+        ops = []
+        ops.extend(qml.PauliZ(i) for i in range(n_qubits))
+        ops.extend(qml.PauliX(i) for i in range(n_qubits))
+        ops.extend(qml.PauliY(i) for i in range(n_qubits))
+        for p1, p2 in ((qml.PauliZ, qml.PauliZ), (qml.PauliZ, qml.PauliX)):
+            ops.extend(
+                p1(i) @ p2(j)
+                for i in range(n_qubits)
+                for j in range(i + 1, n_qubits)
+            )
+        return ops
+
     ops = []
     if "z" in parts:
         ops.extend(qml.PauliZ(i) for i in range(n_qubits))
@@ -140,19 +165,9 @@ def make_observables(n_qubits: int, spec: str):
             for i in range(n_qubits)
             for j in range(i + 1, n_qubits)
         )
-        ops.extend(
-            qml.PauliZ(i) @ qml.PauliX(j)
-            for i in range(n_qubits)
-            for j in range(i + 1, n_qubits)
-        )
     if "xxall" in parts:
         ops.extend(
             qml.PauliX(i) @ qml.PauliX(j)
-            for i in range(n_qubits)
-            for j in range(i + 1, n_qubits)
-        )
-        ops.extend(
-            qml.PauliX(i) @ qml.PauliY(j)
             for i in range(n_qubits)
             for j in range(i + 1, n_qubits)
         )
@@ -162,17 +177,20 @@ def make_observables(n_qubits: int, spec: str):
             for i in range(n_qubits)
             for j in range(i + 1, n_qubits)
         )
-        ops.extend(
-            qml.PauliY(i) @ qml.PauliZ(j)
-            for i in range(n_qubits)
-            for j in range(i + 1, n_qubits)
-        )
     return ops
 
 
 def n_readout(n_qubits: int, spec: str) -> int:
     """与 :func:`make_observables` 对应的读出维度，供分类头构造使用。"""
     return len(make_observables(n_qubits, spec))
+
+
+def count_qwc_groups(n_qubits: int, spec: str) -> int:
+    """使用 PennyLane ``group_observables(..., grouping_type="qwc")`` 程序化统计 QWC 测量基数。"""
+    ops = make_observables(n_qubits, spec)
+    if not ops:
+        return 0
+    return len(qml.pauli.group_observables(ops, grouping_type="qwc"))
 
 
 def make_rich_layer(

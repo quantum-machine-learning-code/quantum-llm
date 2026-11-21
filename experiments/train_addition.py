@@ -76,7 +76,7 @@ FIGURE = FIGS / "addition_accuracy.png"
 
 GROUP_IDS = ("add_q_rich48", "add_classical")
 
-# 与 diagnose_llm.py 的 caus_q_rich48 / caus_classical 逐项一致
+# 与 diagnose_llm.py 的 caus_q_rich48 / caus_classical 逐项一致（显式标为 legacy_rich48）
 GROUP_SPECS = {
     "add_q_rich48": {
         "transform_type": "quantum",
@@ -84,7 +84,7 @@ GROUP_SPECS = {
         "context_window": CONTEXT_WINDOW,
         "n_qubits": 4,
         "n_layers": 1,
-        "observables": "z+x+y+zzall+xxall+yyall",
+        "observables": "legacy_rich48",
         "reupload": False,
         "pre_scale": True,
         "near_identity_init": True,
@@ -98,7 +98,7 @@ GROUP_SPECS = {
         "context_window": CONTEXT_WINDOW,
         "n_qubits": 4,
         "n_layers": 1,
-        "observables": "z+x+y+zzall+xxall+yyall",
+        "observables": "legacy_rich48",
         "reupload": False,
         "pre_scale": True,
         "near_identity_init": False,
