@@ -1,4 +1,4 @@
-# Quantum LLM · Task 1: Modulo-112 Addition; Task 2: Toy Character Language Model & Methodological Audit
+# quantum-llm · Methodological Audit & Quantum-Native Sequence Benchmarks
 
 English | [简体中文](README.md)
 
@@ -6,280 +6,115 @@ English | [简体中文](README.md)
 ![PennyLane](https://img.shields.io/badge/PennyLane-0.45-9b59b6)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Toy scale](https://img.shields.io/badge/scale-toy%20%2F%20not%20an%20LLM-orange)
+![Scope](https://img.shields.io/badge/scope-toy%20%2F%20methodological%20benchmark-orange)
 
-> **Scope upfront: this is NOT a conversational Large Language Model.** This repository embeds a parameterized quantum circuit (VQC) as **one differentiable transformation layer** inside toy sequence models and runs strictly controlled multi-seed experiments to diagnose the "rank bottleneck into and out of the quantum layer" and how a causal context window breaks the bigram entropy wall. All runs compare against parameter-matched / architecture-matched classical baselines and no-quantum (`Identity`) ablations on deterministic full-corpus cross-entropy, held-out perplexity, and wall-clock runtime.
-
-At current hardware and state-vector simulator limits ($2^n$ state dimension), billion-parameter quantum LLMs do not exist. Instead, this codebase conducts **toy-scale QNLP feasibility studies and methodological audits** (e.g., 31-character vocabulary, 1,668-char built-in training corpus formed by repeating a 417-char block 4 times plus a 382-char held-out split with 90.2% $k=4$ context overlap, sequence length 16, 4 qubits, as well as zero-overlap modular arithmetic and a disjoint-sentence corpus). For the full methodological review (in Chinese), see [`docs/REVIEW.md`](docs/REVIEW.md); for the sister image-classification benchmark, see [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist).
-
-> **Task split (2026-11-13)**: Task 1 replaces the overlapped text task with **exhaustive, zero-overlap modulo-112 addition**, while the character-level language model becomes Task 2. Both share the same controlled quantum-vs-classical comparison harness.
+> **Scope disclaimer**: This repository is **not** a conversational LLM. It is a controlled CPU statevector / tensor-network benchmark separating **Regime II (tiny VQC bottlenecks embedded in classical backbones)** from **Regime III (quantum-native sequence models: autoregressive MPS Born Machines + true L2 persistent Unitary SSMs)**. Full audit log: [`docs/REVIEW.md`](docs/REVIEW.md); architecture spec: [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md); sister repo: [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist).
 
 ---
 
-## Control-design correction (2026-11-16 — supersedes all numbers below)
+## Research Questions ↔ Experiments ↔ Verdicts
 
-> Historical "quantum vs classical" comparisons in this repository were **not clean
-> ablations**. The two arms differed in readout `scale` (5.0 vs 1.0), initialization
-> (`near_identity_init` True vs False), and bottleneck capacity (12 vs 240
-> parameters). Consequently all such numbers — including `0.1817 vs 0.1365`,
-> "0 significant after Holm", and the claim "no demonstrable quantum contribution" —
-> are **downgraded to observations between different configurations**. They support
-> neither "no quantum advantage" nor "quantum advantage".
->
-> Two further mismatches: the `RICH/*` conditions in the grokking long-training
-> runs were actually the classical arm (`group="add_classical"`), and Task 1
-> evaluates only the last position (`answer_logits`), i.e. one-shot 112-class
-> classification rather than autoregressive generation. The quantum layer also
-> runs position-wise and carries no cross-step state, so sequence modeling is
-> entirely classical — see [`docs/REVIEW.md` §14](docs/REVIEW.md) (Chinese).
->
-> **Fixed**: `--matched` mode, where `assert_matched()` hard-asserts that the two
-> arm specs are identical except `transform_type` (13 shared fields: same learnable
-> scale, default initialization on both arms, no asymmetric `LayerNorm`),
-> and `annotate_matched()` blocks any comparison unless both arms leave the
-> random baseline.
->
-> **Device diagnosis (§14.7, `docs/matched_calibration.json`)**: the "symmetric"
-> small-initialization patch itself produced a **16×** initial-output std gap;
-> a shared `LayerNorm` amplified the two arms by `2.57× / 40.31×` (not a symmetric
-> operation) and collapsed both to `0.0062`. v3 removes all patches and aligns
-> the initial std (`0.258 / 0.286`, 0.9×), but at `lr=0.015` the classical arm
-> still fails in 4/5 seeds. All three archives have `device_validity.valid=false`
-> and are **configuration diagnostics only**.
->
-> **Jointly feasible region, not per-arm tuning**: a recorded small-budget grid
-> shows the classical arm is governed by `lr` (all four scales learn at `0.003`,
-> nearly all collapse at `0.015/0.03`). At `lr=0.003, scale_init=5.0` both arms
-> pass the threshold in 2/2 pilot seeds. The formal 5-seed × 2000-step run
-> (`docs/matched_v4_metrics.json`) is the **first run that passes the device
-> check** (`device_validity.valid=true`, 5/5 seeds per arm): quantum
-> `0.3251±0.0464`, classical `0.2767±0.0917`. The primary endpoint
-> `val_accuracy` has paired Δ `+0.0485`, CI `[-0.0677,+0.1647]`, `p=0.311`;
-> the only Holm-significant endpoint is `generalization_gap` (`+0.0156`,
-> i.e. a larger train–val gap on the quantum arm), **not an accuracy gain**.
-> With the 12 vs 240 capacity gap and the position-wise quantum layer still
-> unresolved, this is evidence that both implementations learn — not a
-> quantum-layer causal effect.
->
-> **Capacity sweep (§14.8)**: at `n_layers=20` the quantum arm has 240 parameters,
-> exactly matching the classical 240 (`0.3865 s/step`). Matching parameter counts
-> still changes circuit depth, expressivity and gradient scale, so it does not
-> isolate a single variable. See `docs/capacity_matched_pilot.json`.
->
-> **Prior constraint (§15)**: the quantum layer is position-wise and carries no
-> cross-step state; Task 1 is one-shot classification. Even a perfectly matched
-> control only compares two pointwise non-linearities. An L1 measurement-feedback
-> quantum recurrent prototype is now in `qml_lab/recurrent.py`, with the L0/L1/L2
-> roadmap and P1–P4 criteria in `docs/ARCHITECTURE_PROPOSAL.md`. All archives in
-> this section are labelled **classical-bottleneck baselines**.
->
-> **L1 short-budget pilot (§16, 2026-11-17)**: `experiments/recurrent_pilot.py`
-> verifies the P1–P4 structural contracts (4/4 pass; disabling state feedback
-> zeroes prefix sensitivity and cross-step gradients exactly) and measures cost
-> (`0.194 s/step` at T=8, `~0.11 h/seed` for 2000 steps, 333 MB peak, single
-> process). **Functional state use is NOT demonstrated**: on a delayed-recall
-> task both quantum arms stay at `0.297` (random baseline `0.25`) while the
-> classical positive control reaches `0.594`. This is a device calibration, not
-> an effect comparison — no quantum-vs-classical claim, paired CI, or Holm
-> significance is reported. The "learned" threshold is explicit in the archive:
-> last-token acc > 0.25 + 0.10 (device calibration, **not** a significance test).
-> Peak memory is reproducible with `--probe-memory` (332.7 MB at run time,
-> 334.8 MB recheck). See `docs/recurrent_pilot.json` and
-> `docs/figures/recurrent_pilot.png`; README section 1f has the full table.
->
-> **Skill-based audit (2026-11-17)**: `state_channel_probe.py` shows L1 `RZ`
-> phase feedback is invisible to `expval(Z)` at zero entangler weight and ~163x
-> weaker than an `RY` feedback at the default `init_std=0.05` — a **testable
-> candidate cause** for the zero recall gain, not a training result and not
-> evidence that quantum recurrence cannot memorise. All pilot numbers are
-> 2-seed illustrative means (independent unit = seed, no SD/CI); delayed recall
-> has only 4 distinct inputs and is not held-out generalisation. Next step: a
-> single-variable readout/state-gate A/B before longer training.
-
-## Task 1: Modulo-112 Addition ($\mathbb{Z}_{112}$, 2026-11-13)
-
-> **Task definition**: Compute $(a + b) \bmod 112$ over $\{0, \dots, 111\}$ (`111+1=0` wrap-around, `0+0=0` identity). The vocabulary has **117 tokens: 112 integer tokens + four operators (`+ - * /`) + `=`**. Only addition equations are generated in this round; the remaining operators reserve vocabulary slots for follow-up arithmetic tasks (`/` does not always have a unique inverse on the non-field $\mathbb{Z}_{112}$).
-
-| Equation | Token sequence |
-| --- | --- |
-| `111+1=0` | `[111, 112, 1, 116, 0]` |
-| `0+0=0` | `[0, 112, 0, 116, 0]` |
-
-The model reads `[a][+][b][=]` (exactly `context_window=4`) and predicts the answer token `c` — **112-way single-token classification** with random baseline $1/112 = 0.0089$. All $112 \times 112 = 12{,}544$ ordered pairs `(a, b)` are strictly disjoint-split into 10,035 train / 2,509 validation pairs so **validation $k=4$ context coverage in training is 0.0%** (versus 90.2% in the legacy corpus and 38.7% in the independent corpus), testing genuine unseen compositional generalization.
-
-![Modulo-112 addition: training curves and final accuracy](docs/figures/addition_accuracy.png)
-
-| Group | Train Acc | Unseen Val Acc | Val Loss | Wall-clock / seed |
-| --- | --- | --- | --- | --- |
-| `add_q_rich48` (Quantum) | `0.1924` | **`0.1817 ± 0.0423`** | `2.2880` | `440.6 s` |
-| `add_classical` (Matched classical ablation) | `0.1496` | `0.1365 ± 0.0410` | `2.6587` | `17.5 s` |
-
-Across 5 seeds × 2,000 steps, both arms beat random guessing overwhelmingly (binomial $p \approx 0$), confirming compositional generalization rather than memorization, yet accuracies stay low (18% / 14%) and curves are still rising. **0 of 3 pre-specified primary tests survive Holm correction**: the paired validation accuracy difference is `+0.0451` with 95% CI `[-0.0003, +0.0905]` crossing zero — higher mean for the quantum arm, but **no statistically verifiable positive quantum contribution**. Although `val_loss` differs by `-0.3707` (significant after Bonferroni), loss is not the primary accuracy endpoint.
-
-**Three essential caveats**:
-1. **Shared circular prior**: Under random embeddings across 3 learning rates up to 25.5 epochs, both arms remained stuck at chance. We therefore initialized the integer token embeddings with a **shared circular angle encoding** $[\sin(2\pi n/112), \cos(2\pi n/112), \sin(4\pi n/112), \cos(4\pi n/112)]$ as a classical inductive bias — a prerequisite for this architecture to learn the task, **not a quantum advantage**. Section 12 below shows that a grokking quadratic MLP learns the exact same zero-overlap split from random embeddings to >99%, proving the bottleneck lies in the architecture, not task learnability.
-2. **Initialization, not freezing**: `nn.Embedding` defaults to `requires_grad=True`, so Adam updates it on every step (measured RMS drift `0.2816` / `0.3674` after training).
-3. **Matched untuned hyperparameters**: Both arms use identical settings (`lr=0.015`) with no per-arm hyperparameter tuning.
-
-### Three-Way Embedding Ablation (frozen vs. trainable vs. random)
-
-Archived in [`docs/embedding_ablation_metrics.json`](docs/embedding_ablation_metrics.json) and plotted in [`docs/figures/embedding_ablation.png`](docs/figures/embedding_ablation.png): `frozen_circular` (circular init, frozen), `trainable_circular` (circular init, trainable — Task 1 default), and `trainable_random` (random init, trainable). Over 5 seeds × 2,000 steps evaluated on all 2,509 unseen pairs:
-
-| Embedding Mode | Quantum Val Acc | Classical Val Acc |
+| Research Question (RQ) | Paradigm / Script & Archive | Controlled Verdict (5 Seeds, Holm-Bonferroni) |
 | --- | --- | --- |
-| `frozen_circular` | **`0.2418 ± 0.0488`** | `0.1839 ± 0.0427` |
-| `trainable_circular` (Task 1 default) | `0.1835 ± 0.0463` | `0.1462 ± 0.0447` |
-| `trainable_random` | `0.0062 ± 0.0012` | `0.0062 ± 0.0012` |
-
-- Unfreezing the circular prior lowers validation accuracy numerically in both arms (`-0.0583` `[-0.1318, +0.0153]` quantum / `-0.0377` `[-0.1187, +0.0433]` classical), though **CIs cross zero**. What is strongly significant is the circular prior itself (`+0.1773` `[+0.1200, +0.2346]` / `+0.1400` `[+0.0849, +0.1950]`); `trainable_random` stays at loss `4.735 ≈ ln(112)` after 2,000 steps.
-- Across all three modes, quantum − classical accuracy differences are `+0.0579 / +0.0373 / +0.0000`, with **0 of 9 primary tests significant after Holm correction**. Note also that 2,000 steps correspond to only ~6.4 epochs while curves are still rising.
-
-### Negative Grokking Result & Positive Control
-
-Archived in [`docs/grokking_metrics.json`](docs/grokking_metrics.json), [`docs/grokking_pilot.json`](docs/grokking_pilot.json), and [`docs/figures/grokking_scan.png`](docs/figures/grokking_scan.png). Holds-out over `(a, b)` with trainable random embeddings mirror Power et al. (2022), while our circular encoding resembles the Fourier representations Nanda et al. (2023) showed grokking networks converge to. We ran a 3-stage scan (1-seed 19-condition pilot up to 20,000 steps → 5-seed 40,000-step confirmation → short quantum timing run) alongside a grokking quadratic MLP positive control:
-
-![Grokking scan: pilot grid, 5-seed trajectories, phase transition, and cost](docs/figures/grokking_scan.png)
-
-| 5-Seed Confirmation | Steps | Val Acc | Grokking Seeds |
-| --- | --- | --- | --- |
-| `RichQuantumLM` random embedding + AdamW `wd=0.1` | 40,000 | `0.0255 ± 0.0411` | **0/5** |
-| `frozen` (frozen circular encoding) | 40,000 | `0.4207 ± 0.0292` | 0/5 |
-| `trainable_circular` (default) | 40,000 | `0.2736 ± 0.1129` | 0/5 |
-| Quadratic MLP positive control (20% train split + `wd=1.0`) | 5,000 | **`0.9944 ± 0.0006`** | **5/5** |
-| Quadratic MLP positive control (same 80/20 split) | 5,000 | `0.9983 ± 0.0002` | 0/5 |
-
-- **Negative finding for this repo's architecture**: Grokking reproduces cleanly in the positive control (memorization by step 1,000 with train acc `1.00`, sudden generalization jump `+0.667` to val acc `0.99` by step 1,500), whereas extending `RichQuantumLM` to 20× budget (40,000 steps) with weight decay produces **0/5 grokking seeds**. Under the exact same 80/20 split, the architectural gap is `+0.9910` (CI `[+0.9877, +0.9943]`, the sole significant primary comparison after Holm correction). Thus, the bottleneck is architectural lack of multiplicative / bilinear interaction terms rather than training length.
-- **Cost asymmetry**: Measured simulation speed is `0.1264 s/step` (quantum) vs. `0.0038 s/step` (classical) — a **33.6×** gap (`~3.5 h` vs. `~0.1 h` at $10^5$ steps).
+| **RQ1**: On zero-overlap mod-112 compositional addition, does a 4q L0 VQC beat a strictly matched classical layer? | Regime II · `train_addition.py --matched` ([`matched_v4_metrics.json`](docs/matched_v4_metrics.json)) | **No**. Quantum `0.3251 ± 0.0464` vs Classical `0.2767 ± 0.0917` ($\Delta=+0.0485$, CI `[-0.0677, +0.1647]`, $p=0.311$). Learnability comes from the shared circular prior (`0.1835` vs `0.0062`); quantum weights are `12/10230 (0.12%)`. |
+| **RQ2**: Was the legacy char-LM quantum overfitting gap (`+0.3263`) a confound artifact, and does L0 VQC beat a parameter-matched classical trig surrogate? | Regime II · `matched_task2.py` ([`matched_task2_metrics.json`](docs/matched_task2_metrics.json)) | **Confound-driven + parity**. Re-introducing legacy `scale=5.0 + ni=True` alone inflates the gap by `+0.1249` ($p_{\text{Holm}}=0.0097$). Once matched, Quantum ties the 12-param `ClassicalTrig` surrogate (`val 2.4804` vs `2.4834`, $\Delta=-0.0030$, $p_{\text{Holm}}=0.895$) at **20.7×** wall-clock cost (`12/3646 = 0.33%` quantum params). |
+| **RQ3**: Why did the legacy L1 quantum RNN stay near chance on delayed recall? | L1 probe · `state_channel_probe.py` ([`state_channel_probe.json`](docs/state_channel_probe.json)) | **Dead-channel bug**. At exact initial state $s=0, w=0$, both `RZ+Z` and `RZ+X` have `0.000e+00` gradient, whereas conjugate `RZ+Y` (`1.140e-01`) and `RY+Z` (`7.951e-01`) remain $O(1)$. Fixing this lifts L1 recall from `0.500` to `0.750` (`RZ+Y`) / `0.900` (`RY+Z`). |
+| **RQ4**: Does quantum destructive interference (MPS Born Machine) outperform parameter-matched non-negative MPS and RNN controls? | Regime III Track 1 · `benchmark_quantum_native_seq.py` ([`quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json)) | **Yes (representational interference advantage)**. On Periodic-4 OOD $T=14$, 24-param complex $\chi=2$ MPS reaches exact `KL=0.0949` vs parameter-matched 24-param non-negative $\chi=3$ MPS `0.3929` ($p_{\text{Holm}}=0.0247$) and RNN `0.5144` ($p_{\text{Holm}}=0.00573$). On Dyck-1, 84-param signed $\chi=6$ MPS beats 84-param non-negative MPS on `NLL_ID` (`0.4415` vs `0.4732`, $p_{\text{Holm}}=0.000382$) and RNN on OOD validity (`+63.2 pt`, $p_{\text{Holm}}=0.0144$). |
+| **RQ5**: Does true L2 persistent coherent unitary recurrence (`QuantumUnitarySSM`) achieve OOD non-Abelian state tracking? | Regime III Track 2 · `benchmark_quantum_native_seq.py` ([`quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json)) | **Yes (vs L0/L1/RNN), tied with matched $SO(d)$**. Hits **`1.000 ± 0.000`** on both $S_3$ (train $T=6 \to$ OOD $T=16$) and Delayed Recall (OOD `pad=8`) with 0 MLP crutch (PennyLane verified `<2.4e-7`), decisively beating L0 (`0.156`), L1 (`0.291`), and RNN (`0.270`), while matching `ClassicalOrthogonalSSM` (`1.000`). |
 
 ---
 
-## Task 2: Character-Level Language Model · Summary & Methodological Findings
+## 1. Regime II: Strictly Matched L0 Classical-Backbone + VQC Benchmarks
 
-> **Corpus Audit (2026-11-07, [`audit_corpus.py`](experiments/audit_corpus.py), [`docs/corpus_audit.json`](docs/corpus_audit.json))**: The legacy 1,668-character training text repeats a single 417-character paragraph 4 times (only 22.4% unique 4-grams), and **90.2%** of token positions in the legacy 382-character validation split share $k=4$ contexts already seen in training. Hence `val PPL 4.29` on the legacy split measures **in-distribution sentence recombination**, not unseen generalization.
->
-> **Independent Disjoint Corpus (2026-11-13, [`docs/independent_corpus_metrics.json`](docs/independent_corpus_metrics.json))**: A topic-separated, sentence-disjoint English corpus (3,171 train chars / 44 sentences vs. 947 val chars / 14 sentences covering sailing, baking, geology, weather, and gardening; 94.1% novel word bigrams) lowers $k=4$ context overlap from **90.2% to 38.7%**. Over 5 seeds, the quantum arm still fits training data better ($\Delta = -0.1069$ nats), but reverses on validation ($\Delta = +0.0974$ nats, CI crosses 0) with a significantly larger generalization gap (`+0.2044` nats). **The quantum layer's benefit here is training fit, not generalization.**
->
-> **Robustness Check (2026-11-13, 20 seeds × 1,200 steps, [`docs/robustness_metrics.json`](docs/robustness_metrics.json))**: Scaling the independent corpus benchmark to **20 seeds × 1,200 steps** grows the generalization gap difference from `+0.0758` (100 steps) → `+0.1433` (300 steps) → `+0.3263` (1,200 steps, Holm-significant). Quantum validation loss climbs monotonically (`2.5305 → 2.7431`) while training loss drops (`2.2982 → 1.8922`), confirming **progressive overfitting rather than 300-step underfitting**; validation loss difference becomes significant (`+0.0599` at 300 steps, Holm $p = 0.0022$; `+0.1774` at 1,200 steps). However, on a harsher `synthetic` stress corpus (`k=4` coverage `0.24%`, JS divergence `0.2538`), both arms collapse above `5` nats and the gap difference (`+0.5602`, CI `[-0.1406, +1.2609]`) is not significant — establishing a clear corpus validity boundary.
+### 1.1 Task 2 (Independent Character Corpus, Canonical 30-Pauli / 3 QWC Readout)
 
-### Why the Initial Baseline (`TinyLM`) Stalled & How Diagnostics Fixed It
+Legacy `independent_corpus.py` / `robustness_check.py` had an uncaught confound: `scale=5.0, near_identity_init=True` on the quantum arm vs `scale=1.0, near_identity_init=False` on the classical arm, and no trigonometric classical surrogate. `experiments/matched_task2.py` asserts 13 identical fields across arms (learnable `out_scale` initialized at `1.0`, default init, `steps=400, lr=0.01, seeds=0..4`), aligns with `quantum-mnist` on the canonical 30-Pauli readout (`z+x+y+zzall+xxall+yyall`, **3 QWC groups** vs 10 in legacy 48-Pauli), and adds a 12-param `ClassicalTrigBilinearLayer` ([`docs/matched_task2_metrics.json`](docs/matched_task2_metrics.json)):
 
-1. **Unigram/Bigram trap ($k=1$):** Flattening `(B, T, Q)` to `(B*T, Q)` leaves no cross-timestep interaction, collapsing a `seq_len=16` model into a **$k=1$ bigram model** whose theoretical entropy floor on the legacy corpus is **`1.9701` nats (PPL `7.17`)** and whose greedy decoding loops on `" the"`.
-2. **Batch-noise illusion:** Reporting single final mini-batch loss (128 tokens) introduced step-to-step std `0.11` nats — 8× larger than the claimed `0.032`-nat difference — compounded by unaligned batch seeds and weights.
-3. **Controlled resolution:** Expanding 4-qubit readouts from 4 `PauliZ` channels to **48 orthogonal single- and two-qubit Pauli observables** (`z+x+y+zzall+xxall+yyall`, relieving the rank-4 `Linear(4, 31)` bottleneck) plus a strictly causal $k=4$ convolution (`CausalContextEncoder`) lowers 5-seed full-corpus deterministic train loss from **`2.3864 ± 0.0553`** (PPL `10.89`) to **`0.8271 ± 0.0717` nats** (PPL `2.29`), while remaining slower by **~42×** (`37.76 s` vs. `0.90 s` per seed) than `caus_classical` (`Linear(4, 48) + Tanh` + `MLP`).
+| Arm | Total Params (Q / C-transform) | QWC | Init Std | Train Loss | Independent Val Loss | Gen Gap (Val−Train) | Final Scale | Time / seed |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `caus_q_rich30` (matched) | `3,646` (**12** = `0.33%` / 0) | **3** | `0.3261` | `2.0992 ± 0.0074` | `2.4804 ± 0.0291` | `0.3812 ± 0.0354` | `1.57` | `31.6 s` |
+| `caus_classical_tanh` (matched) | `3,784` (0 / 150) | 0 | `0.3951` | `2.1435 ± 0.0115` | `2.4425 ± 0.0400` | `0.2990 ± 0.0399` | `0.93` | `1.2 s` |
+| `caus_classical_trig` (12-param) | `3,646` (0 / **12**) | 0 | `0.3765` | `2.0498 ± 0.0213` | `2.4834 ± 0.0335` | `0.4335 ± 0.0275` | `1.30` | `1.5 s` |
+| `diag_unmatched_q_scale5` (diag) | `3,645` (12 / 0) | 3 | — | `2.0315 ± 0.0271` | `2.5376 ± 0.0361` | `0.5062 ± 0.0415` | `5.00` | `31.2 s` |
 
-### Information-Theoretic Conditional Entropy Floors $H(C_{t+1} \mid C_{t-k+1..t})$ (Legacy Corpus)
+- **Confound resolution**: Re-introducing `scale=5.0 + ni=True` alone increases the quantum overfitting gap by **`+0.1249`** ($p_{\text{Holm}}=0.009705$) and degrades val loss by `+0.0572` ($p_{\text{Holm}}=0.0413$).
+- **No unique quantum effect**: Once matched, `Q − Tanh` val loss (`+0.0379`, $p_{\text{Holm}}=0.289$) and gap (`+0.0822`, $p_{\text{Holm}}=0.095$) are not Holm-significant. Against the exact 12-param `ClassicalTrig` surrogate, val loss is indistinguishable (`Δ=-0.0030`, $p_{\text{Holm}}=0.895$), confirming the historical behavior came from **degree-1+2 trig monomials + fixed 5× scaling**, not quantum mechanics.
 
-| Context order $k$ | Model class | Unique contexts | Asymptotic $H$ (nats) | Min asymptotic PPL | Window ($T=16$) floor | Min window PPL |
-| --- | --- | --- | --- | --- | --- | --- |
-| $k = -1$ | Uniform $\ln V$ | 1 | `3.4340` | `31.00` | `3.4340` | `31.00` |
-| $k = 0$ | Unigram frequency | 1 | `2.8493` | `17.28` | `2.8493` | `17.28` |
-| **$k = 1$** | **Per-token (`context_mode="token"`)** | **31** | **`1.9701`** | **`7.17`** | **`1.9701`** | **`7.17`** |
-| $k = 2$ | 2-char causal window | 183 | `0.7938` | `2.21` | `0.8673` | `2.38` |
-| **$k = 4$** | **4-char causal window (`context_mode="causal"`)** | **373** | **`0.1000`** | **`1.11`** | **`0.2680`** | **`1.31`** |
-| $k = 8$ | 8-char causal window | 416 | `0.0033` | `1.00` | `0.2005` | `1.22` |
+### 1.2 Task 1 (Zero-Overlap Mod-112 Compositional Addition)
 
-### 11-Group × 5-Seed Controlled Benchmark (300 steps, `seeds=[0,1,2,3,4]`)
-
-Reproduce via `python experiments/diagnose_llm.py` ([`docs/llm_diagnosis_metrics.json`](docs/llm_diagnosis_metrics.json)):
-
-| Group ID | Context | Layer & Readout Spec | Params | Readout Dim | Train Eval Loss (nats) | Train PPL | Held-out Val Loss | Val PPL | Mean Time |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `tok_q_legacy` | Token ($k=1$) | 4q `PauliZ`, `scale=1.0` | 291 | 4 | `2.3864 ± 0.0553` | `10.89 ± 0.61` | `2.3929 ± 0.0491` | `10.96` | `5.90 s` |
-| `tok_q_scaled` | Token ($k=1$) | 4q `PauliZ` + `tanh*π/2` + `scale=5.0` | 291 | 4 | `2.3370 ± 0.0355` | `10.36 ± 0.36` | `2.3421 ± 0.0353` | `10.41` | `5.93 s` |
-| `tok_identity` | Token ($k=1$) | No-quantum `Identity` ablation | 279 | 4 | `2.2515 ± 0.0235` | `9.50 ± 0.23` | `2.2629 ± 0.0281` | `9.61` | `0.37 s` |
-| `tok_classical` | Token ($k=1$) | Classical `Linear(4,4) + Tanh` | 299 | 4 | `2.2893 ± 0.0307` | `9.87 ± 0.30` | `2.2946 ± 0.0347` | `9.93` | `0.46 s` |
-| `tok_q_rich24` | Token ($k=1$) | 4q 24-dim (`z+x+y+zzall`) | 911 | 24 | `2.0661 ± 0.0097` | `7.89 ± 0.08` | `2.0780 ± 0.0066` | `7.99` | `16.18 s` |
-| **`tok_q_rich48`** | Token ($k=1$) | 4q 48-dim two-body readout | 1,655 | 48 | **`2.0631 ± 0.0148`** | **`7.87 ± 0.12`** | **`2.0774 ± 0.0139`** | **`7.98`** | `37.41 s` |
-| `caus_q_z` | Causal ($k=4$) | 4q `PauliZ` (rank-4 bottleneck) | 923 | 4 | `1.9850 ± 0.1262` | `7.33 ± 0.95` | `2.1403 ± 0.1155` | `8.55` | `6.36 s` |
-| `caus_identity` | Causal ($k=4$) | No-quantum `Identity` ablation | 911 | 4 | `1.6549 ± 0.0573` | `5.24 ± 0.30` | `1.9394 ± 0.0448` | `6.96` | `0.66 s` |
-| `caus_q_reup` | Causal ($k=4$) | 2-layer trainable re-upload + `z+x+y` | 1,191 | 12 | `1.5135 ± 0.1253` | `4.57 ± 0.58` | `1.8598 ± 0.1606` | `6.49` | `14.33 s` |
-| `caus_classical` | Causal ($k=4$) | Classical `Linear(4,48)+Tanh` + `MLP` | 4,867 | 48 | `1.1483 ± 0.0617` | `3.16 ± 0.20` | `1.6266 ± 0.1166` | `5.11` | `0.90 s` |
-| **`caus_q_rich48`** | **Causal ($k=4$)** | **4q 48-dim two-body + `MLP`** | **4,639** | **48** | **`0.8271 ± 0.0717`** | **`2.29 ± 0.16`** | **`1.4494 ± 0.1290`** | **`4.29`** | `37.76 s` |
-
-![5-seed diagnostic comparison](docs/figures/lm_diagnosis.png)
-
-**Independent corpus (38.7% $k=4$ overlap, 5 seeds × 300 steps):**
-
-| Group | Train Loss | Independent Val Loss | Val PPL | Gen Gap | Time / seed |
-| --- | --- | --- | --- | --- | --- |
-| `caus_q_rich48` (Quantum) | **`2.1045 ± 0.0200`** | `2.5756 ± 0.0692` | `13.164` | `0.4711` | `46.2 s` |
-| `caus_classical` (Classical surrogate) | `2.2115 ± 0.0169` | **`2.4782 ± 0.0385`** | **`11.926`** | **`0.2667`** | `1.3 s` |
-
-Paired quantum − classical differences (4-test Bonferroni): train `-0.1069` (FWI CI `[-0.1568, -0.0570]`, significant); val `+0.0974` (FWI CI `[-0.0656, +0.2604]`, not significant); **generalization gap `+0.2044`** (FWI CI `[+0.0436, +0.3651]`, significant).
+- **Matched v4 ([`docs/matched_v4_metrics.json`](docs/matched_v4_metrics.json), 5 seeds × 2000 steps, `lr=0.003, scale_init=5.0`)**: Quantum `0.3251 ± 0.0464` vs Classical `0.2767 ± 0.0917` (5/5 seeds pass device validity on both arms; paired $\Delta=+0.0485$, CI `[-0.0677, +0.1647]`, $p=0.311$; only `generalization_gap` `+0.0156` is Holm-significant — larger gap on quantum, not an accuracy gain).
+- **Prior & grokking boundaries**: Embedding ablation ([`embedding_ablation_metrics.json`](docs/embedding_ablation_metrics.json)) confirms random init stalls at `0.0062` (≈ $1/112$), while the shared circular prior adds `+0.1773` / `+0.1400`. Matched-hyperparameter $10^5$-step no-prior reruns ([`grokking_no_prior.json`](docs/grokking_no_prior.json)) show `RICH wd=0` mid-memorization (`train 0.6565 / val 0.0076`) vs `MLP wd=1` (`val 0.9918`); the earlier §12 "architecture bottleneck" claim was formally withdrawn in §13.
 
 ---
 
-## Installation & Quickstart
+## 2. L1 Recurrent State-Channel Diagnostic
 
-Requires **Python 3.11+**. All experiments run offline on CPU (no hardware credentials or downloads needed).
+`experiments/state_channel_probe.py` ([`docs/state_channel_probe.json`](docs/state_channel_probe.json)) evaluates $|\partial(\sum_i \langle O_i \rangle)/\partial s|$ across 4 gate/basis configs at both random $s \sim \mathcal{N}(0, 0.1)$ and exact initial state $s = 0$:
 
-```bash
-python3 -m venv .venv
-# Install CPU-only PyTorch first to avoid large CUDA wheels on Linux/CI:
-.venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-.venv/bin/python -m pip install -e ".[dev]"
-```
+| Entangler `init_std` | `RZ + Z` ($s=0$ / $s\sim\mathcal{N}$) | `RZ + X` ($s=0$ / $s\sim\mathcal{N}$) | `RZ + Y` conjugate ($s=0$ / $s\sim\mathcal{N}$) | `RY + Z` ($s=0$ / $s\sim\mathcal{N}$) |
+| --- | --- | --- | --- | --- |
+| `0.00` | `0.000e+00` / `2.056e-09` | `0.000e+00` / `4.125e-02` | **`1.140e-01`** / **`1.135e-01`** | `7.951e-01` / `8.389e-01` |
+| `0.05` (legacy default) | `1.837e-03` / `5.200e-03` | `4.276e-02` / `4.063e-02` | **`1.084e-01`** / **`1.093e-01`** | `7.998e-01` / `8.476e-01` |
+| `0.50` | `8.608e-02` / `9.492e-02` | `1.368e-01` / `1.302e-01` | `1.242e-01` / `1.185e-01` | `5.024e-01` / `5.030e-01` |
 
-Or with `requirements.txt`:
-
-```bash
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-### 1. Offline Tests & Smoke Checks
-
-```bash
-.venv/bin/python -m pytest -v tests/smoke_test.py
-.venv/bin/python tests/smoke_test.py
-.venv/bin/python experiments/train_llm.py --quick
-.venv/bin/python experiments/diagnose_llm.py --quick
-.venv/bin/python experiments/train_addition.py --quick
-```
-
-### 2. Reproducing Task 1 (Modulo-112 Addition, Embeddings, & Grokking)
-
-```bash
-.venv/bin/python experiments/train_addition.py                             # 5 seeds x 2000 steps (~13 min)
-.venv/bin/python experiments/train_addition.py --probe                     # 1 seed x 1000 steps probe
-.venv/bin/python experiments/train_addition.py --probe --no-circular-embedding
-.venv/bin/python experiments/embedding_ablation.py --quick                 # 3-mode smoke check
-.venv/bin/python experiments/embedding_ablation.py                         # 3 modes x 5 seeds full ablation
-.venv/bin/python experiments/grokking_scan.py --quick                      # End-to-end grokking smoke
-.venv/bin/python experiments/grokking_scan.py --pilot-only                 # 1-seed exploratory pilot
-.venv/bin/python experiments/grokking_scan.py --pilot-from docs/grokking_pilot.json
-.venv/bin/python experiments/grokking_scan.py --redraw-from docs/grokking_metrics.json
-```
-
-When running long scans (`grokking_scan.py`, default `workers=6`), lower `--workers` and set `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` if host RAM is tight.
-
-### 3. Reproducing Task 2 (Char-LM Baselines, Independent Corpus, & 20-Seed Robustness)
-
-```bash
-# Single controlled run (--context-mode token|causal)
-.venv/bin/python experiments/train_llm.py \
-    --qubits 4 --layers 1 --seq-len 16 --batch-size 8 --steps 200 --seed 0
-
-# Causal window + 48-dim two-body Pauli readout
-.venv/bin/python experiments/train_llm.py \
-    --context-mode causal --observables "z+x+y+zzall+xxall+yyall" \
-    --pre-scale --near-identity-init --scale 5.0 --head mlp --steps 300 --seed 0
-
-# Full 11-group x 5-seed diagnosis
-.venv/bin/python experiments/diagnose_llm.py --steps 300 --seeds 0 1 2 3 4 --workers 12
-
-# Disjoint-corpus 5-seed check & 20-seed robustness check
-.venv/bin/python experiments/independent_corpus.py
-.venv/bin/python experiments/robustness_check.py
-```
-
-`--quick` modes write small test outputs under `results/` (or a custom `--out` directory) and never overwrite committed archives in `docs/`.
+Mechanism: `RY(x)|0⟩` lies in the $XZ$ plane, so `RZ(s)` first rotates the Bloch vector toward the $Y$ axis ($\langle Y \rangle = \sin x \sin s$). Hence both `Z` and `X` readouts have zero first-order sensitivity at $s=0, w=0$, whereas `PauliY` is naturally $O(1)$. `qml_lab/recurrent.py` now defaults to `RZ+Y (init_std=1.0)` and fixes the `generate()` boundary-token double-feed bug, real `temperature` sampling, and `detach_state=True` head-gradient detachment.
 
 ---
 
-## Related Repositories & License
+## 3. Regime III: Quantum-Native Sequence Modeling Benchmarks
 
-- Full methodological review (Chinese): [`docs/REVIEW.md`](docs/REVIEW.md)
-- Sister benchmark: [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist)
-- Organization: [quantum-machine-learning-code](https://github.com/quantum-machine-learning-code)
+Archived in [`docs/quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json) (5 seeds, strictly disjoint Train/Val/Test + OOD length generalization, Holm-Bonferroni corrected).
 
-Licensed under the [MIT License](LICENSE).
+### 3.1 Track 1: Autoregressive Tensor-Network Born Machine (`qml_lab/born_machine.py`)
+
+Exact transfer-matrix contraction gives exact Born probabilities $P(x) = |\langle x|\psi\rangle|^2 / \langle\psi|\psi\rangle$ ($\sum_x P(x)=1$ identically, exact ancestral sampling), tested against its **single-variable classical control `ClassicalNonNegMPS`** (same topology, strictly non-negative entries disabling destructive interference, fair `softplus^{-1}` sparse init) and `ClassicalCausalRNNLM`:
+
+| Task & Model | Params | ID Metric | OOD Length Metric | Paired Test (Holm-Corrected) |
+| --- | --- | --- | --- | --- |
+| **Periodic-4** ($P^* \propto \cos^2(\frac{\pi}{4}\sum x_t)$, train $T\in\{4,6,8\}$) | | Exact $\text{KL}_{\text{ID}}$ ($T=8$) / Forb. | Exact $\text{KL}_{\text{OOD}}$ ($T=14$) / Forb. | |
+| `quantum_mps_complex_chi2` (complex $\chi=2$) | **24** | **`0.0729 ± 0.1526`** / **`0.048`** | **`0.0949 ± 0.1521`** / **`0.057`** | — (4/5 seeds hit `KL_ID ≤ 0.0066`, `forb_T14 ≤ 0.010`) |
+| `classical_nonneg_mps_chi2` (same $\chi=2$) | 12 | `0.3667 ± 0.0478` / `0.220` | `0.4527 ± 0.0739` / `0.255` | `Q − NonNeg(χ=2)` $\text{KL}_{\text{ID}} = -0.2938$ ($p_{\text{Holm}}=0.0192$ ✓) |
+| `classical_nonneg_mps_chi3` (**exact 24p**, $\chi=3$) | **24** | `0.3066 ± 0.0489` / `0.195` | `0.3929 ± 0.0505` / `0.248` | `Q − NonNeg(χ=3)` $\text{KL}_{\text{OOD}} = -0.2981$ ($p_{\text{Holm}}=0.0247$ ✓) |
+| `classical_rnn_matched` | 35 | `0.4310 ± 0.0374` / `0.230` | `0.5144 ± 0.0854` / `0.249` | `Q − RNN` $\text{KL}_{\text{OOD}} = -0.4195$ ($p_{\text{Holm}}=0.00573$ ✓) |
+| **Dyck-1 Brackets** (disjoint $T=14 \to 16$; Bayes `0.4330 / 0.4541`) | | Test-ID NLL / Valid | OOD $T=16$ NLL / Valid | |
+| `quantum_mps_chi6` (signed real $\chi=6$) | **84** | **`0.4415 ± 0.0070`** / **`0.939`** | **`0.4704 ± 0.0186`** / **`0.856`** | — |
+| `classical_nonneg_mps_chi6` (same $\chi=6$, 84p) | **84** | `0.4732 ± 0.0046` / `0.650` | `0.5036 ± 0.0030` / `0.592` | `Q − NonNeg` $\text{NLL}_{\text{ID}} = -0.0317$ ($p_{\text{Holm}}=0.000382$ ✓) |
+| `classical_rnn_matched` | 98 | `0.4741 ± 0.0158` / `0.718` | `0.5928 ± 0.0598` / `0.224` | `Q − RNN` OOD valid `+0.632` ($p_{\text{Holm}}=0.0144$ ✓) |
+
+> **Honest boundary**: 1D MPS contraction scales classically as $O(TV\chi^3)$. Track 1 demonstrates a **quantum-inspired destructive-interference / representational separation** (Perron-Frobenius theorem; compiles to shallow sequential circuits), **not** an exponential quantum-hardware speedup.
+
+### 3.2 Track 2: True L2 Coherent Quantum-State Recurrence / Unitary SSM (`qml_lab/quantum_ssm.py`)
+
+`QuantumUnitarySSM` evolves a persistent, uncollapsed 3-qubit coherent state $|\psi_t\rangle = U(x_t)|\psi_{t-1}\rangle \in \mathbb{C}^8$ generated by 1+2-body Pauli Hamiltonians ($U(x_t)=e^{-iH(x_t)}$) with exact complete POVM Born readout ($\sum_c M_c = I_8$), **zero classical MLP crutch**, verified against PennyLane `default.qubit` (`max|Δψ|=1.21e-7`, `max|Δp|=2.38e-7`):
+
+| Model | $S_3$ Word Problem (Params / ID $T=6$ / OOD $T=12$ / **OOD $T=16$**, chance `0.167`) | Deterministic Delayed Recall (Params / ID `pad=4` / **OOD `pad=8`**, chance `0.250`) |
+| --- | --- | --- |
+| **`l2_quantum_unitary_ssm`** (True L2, 0 MLP) | `300` / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** | `344` / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** |
+| `classical_orthogonal_ssm` (matched $SO(9)$) | `270` / `1.000 ± 0.000` / `1.000 ± 0.000` / `1.000 ± 0.000` | `324` / `1.000 ± 0.000` / `0.950 ± 0.112` |
+| `classical_rnn` (unconstrained RNN) | `327` / `0.595 ± 0.134` / `0.321 ± 0.153` / `0.270 ± 0.155` | `228` / `0.900 ± 0.137` / `0.500 ± 0.468` |
+| `l1_quantum_fixed_rzy` (fixed L1 `RZ+Y`) | `278` / `0.390 ± 0.126` / `0.331 ± 0.070` / `0.291 ± 0.059` | `278` / `0.750 ± 0.306` / `0.550 ± 0.326` |
+| `l1_quantum_fixed_ryz` (fixed L1 `RY+Z`) | — | `278` / `0.900 ± 0.137` / `0.700 ± 0.209` |
+| `l1_quantum_legacy_rzz` (legacy `RZ+Z`) | — | `278` / `0.500 ± 0.306` / `0.400 ± 0.137` |
+| `l0_causal_conv` (fixed window $k=4$) | `334` / `0.180 ± 0.018` / `0.176 ± 0.016` / `0.156 ± 0.018` | `348` / `0.250 ± 0.000` / `0.250 ± 0.000` |
+
+- **$S_3$ OOD $T=16$ paired tests**: L2 decisively beats RNN (`+0.730`, $p_{\text{Holm}}=0.000912$), L1 (`+0.709`, $p_{\text{Holm}}=3.32\times10^{-5}$), and L0 (`+0.844`, $p_{\text{Holm}}=2.06\times10^{-7}$), while matching `ClassicalOrthogonalSSM` ($\Delta=0.000, p_{\text{Holm}}=1.0$).
+- **Physical attribution & FTQC boundary**: At $d_H=8$, 100% OOD generalization comes from **norm-preserving coherent group evolution** (unitary/orthogonal vs dissipative RNNs or collapsing L1). Scaling `QuantumUnitarySSM` to exponentially large $2^n$ Hilbert spaces — or implementing **QSVT / block-encoded Quantum Attention** — requires fault-tolerant quantum hardware (FTQC) and QRAM and cannot be claimed as an exponential speedup on classical simulators.
+
+---
+
+## 4. Layout & Quickstart
+
+- `qml_lab/`: `quantum.py` (canonical 30-Pauli / 3 QWC readout + legacy opt-ins), `models.py` (`RichQuantumLM`, `ClassicalTrigBilinearLayer`, `parameter_breakdown`), `recurrent.py` (fixed L1), `born_machine.py` (Regime III Track 1), `quantum_ssm.py` (Regime III Track 2), `arithmetic.py`, `data.py`, `corpus_independent.py`.
+- `experiments/`: `state_channel_probe.py`, `matched_task2.py`, `benchmark_quantum_native_seq.py`, `train_addition.py`, `grokking_no_prior.py`, `diagnose_llm.py`.
+- `tests/smoke_test.py`: 15 offline contract & regression tests (QWC counts, strict causality, POVM completeness, PennyLane statevector parity, and CLI smoke tests).
+
+```bash
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python -m pytest -v tests/smoke_test.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/state_channel_probe.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/matched_task2.py --workers 4
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/benchmark_quantum_native_seq.py --workers 4
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/train_addition.py --matched --lr 0.003 --scale-init 5 --workers 4 --no-figure
+```
+
+*Note: On CPU, set `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` and `--workers <= 4`; all experiment scripts support `--quick` smoke runs writing to `results/` without overwriting `docs/`.*

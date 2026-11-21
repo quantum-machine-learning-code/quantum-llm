@@ -187,7 +187,7 @@ starts = torch.randint(0, max_start, (batch_size,), generator=g).tolist()
 1. **为什么只加因果前端而不扩宽读出（`caus_q_z`）仍然卡在 `1.9850` nats？**
    虽然 `CausalContextEncoder` 已经把 4 个历史字符的信息编码进了 4 个量子比特，但如果只测量 4 个 `PauliZ` 期望（`caus_q_z`），输出又被压回 4 维实数向量，导致后面的 `Linear(4, 31)` 仍然受制于秩-4 瓶颈，且在 `seed=0` 下依然生成 `A qubit can hold the the the...`。
 2. **可训练数据重上传（`caus_q_reup`）与两体关联读出（`caus_q_rich48`）如何解开 4 维瓶颈？**
-   - `caus_q_reup` 采用 Pérez-Salinas 可训练输入缩放重上传 $\text{RY}(\alpha_{l,i} h_{t,i})$（2 层，20 个量子参数）并测量 12 个单比特 Pauli 期望（`z+x+y`），在训练集上比 `caus_q_z` 显著降低 **`-0.4716 ± 0.1061` nats**，也显著优于无量子恒等瓶颈 `caus_identity`（`1.5135` vs `1.6549`）。
+   - `caus_q_reup` 采用 Pérez-Salinas 可训练输入缩放重上传 $\text{RY}(\alpha_{l,i} h_{t,i})$（2 层，32 个量子参数：`2×4` 输入缩放 + `2×4×3` 旋转角）并测量 12 个单比特 Pauli 期望（`z+x+y`），在训练集上比 `caus_q_z` 显著降低 **`-0.4716 ± 0.1061` nats**，也显著优于无量子恒等瓶颈 `caus_identity`（`1.5135` vs `1.6549`）。
    - `caus_q_rich48` 测量全部 48 个正交单比特与两体 Pauli 算符（含 $\langle Z_i Z_j \rangle, \langle Z_i X_j \rangle, \langle X_i X_j \rangle, \dots$），直接在 4 个因果瓶颈通道 $(h_0, h_1, h_2, h_3)$ 之间构造显式的**张量积三角单项式** $\cos(h_i)\cos(h_j), \cos(h_i)\sin(h_j), \sin(h_i)\sin(h_j)$。这使得它能从区区 4 维瓶颈向量中还原出跨时间步字符的乘法交互（conjunctions），将训练集困惑度从 `10.89` 压低至 **`2.29 ± 0.16`**，留出验证集困惑度从 `10.96` 压低至 **`4.29`**。
 3. **为什么在 4 维瓶颈下 `caus_q_rich48` 训练集优于同结构经典 `caus_classical`，以及为什么这不代表「通用量子优势」？**
    - 当强制要求经典与量子模型都先经过同一个 **4 维角度瓶颈** $h_t \in [-\pi/2, \pi/2]^4$ 时，`caus_classical` 的 `Linear(4, 48) + Tanh` 只能计算 4 维向量的 48 个一维脊函数（ridge functions）$\tanh(w_k^\top h_t + b_k)$，在 300 步内近似交叉乘积项 $h_i h_j$ 的效率低于量子态天然的张量积两体期望 $\langle P_i \otimes Q_j \rangle$，因此在训练集上 `caus_q_rich48` 低 `0.3212` nats（5/5 seed 为负）。
@@ -1319,4 +1319,40 @@ Z 基下局部 `RZ` 只改变相对相位、不改变振幅模方，恒等线路
 重算 verdict 与重画（可加 `--out <目录>` 隔离输出，避免误覆盖正式图）；
 `--probe-memory` 只复测内存、不训练不写文件。契约测试
 `check_recurrent_pilot()` 校验单变量消融、P1–P4 数值、语料重叠率与结论边界。
+
+---
+
+## 17. 深度代码审查修复、课题二混杂清算与 Regime III 量子原生基准（2026-11-21）
+
+### 17.1 P0 代码、物理与控制缺陷修复
+
+1. **L1 循环关键 bug 修复（`qml_lab/recurrent.py`）**：
+   - 修复 `detach_state=True` 在计算 `self.head(...)` logits 之前就截断 `next_state` 梯度的 bug（Quantum 与 Classical 同步修复）。
+   - 修复 `_RecurrentBase.generate()` 重复喂入 `prefix[:, -1]` 导致生成与 `forward(prefix)[:, -1].argmax(-1)` 不一致的 bug，并实现真正的 `temperature` 多项分布采样（`torch.multinomial`）。
+   - 补齐 `experiments/state_channel_probe.py` 缺失的 `PauliY` 共轭基与真实首步初态 $s=0$ 诊断（`docs/state_channel_probe.json`）：$s=0, w=0$ 时 `RZ+Z = 0.000e+00`、`RZ+X = 0.000e+00`，唯独 `RZ+Y = 1.140e-01`（$\langle Y \rangle = \sin x \sin s$）与 `RY+Z = 7.951e-01` 保持 $O(1)$；`QuantumRecurrentLM` 默认升级为 `state_feedback="rz", readout_basis="y", init_std=1.0`。
+2. **QWC 对齐与算力/初始化修复**：
+   - `qml_lab/quantum.py` 规范 `"z+x+y+zzall+xxall+yyall"` 与 `quantum-mnist` 对齐为对称同基 30-Pauli（`count_qwc_groups() == 3`）；旧版 24/48-Pauli（10 QWC 组）保留在显式 `"legacy_rich24"` / `"legacy_rich48"` 供历史脚本复现；移除残留 MNIST 死代码 `make_amplitude_layer`。
+   - 修复 `qml_lab/models.py` 中 `near_identity_init=True` 对经典臂采用 `N(0, 0.05^2)` 近零坍缩的不对称初始化（改为分块半正交初始化），并在 `experiments/train_llm.py` 对称传入；新增 `parameter_breakdown()` 与 12 参 `ClassicalTrigBilinearLayer`。
+   - `qml_lab/arithmetic.py:answer_logits()` 改为仅对末位置 `h_last` 执行 `model.transform`，消除 75% 冗余 QNode 计算；修正 §5.2 `caus_q_reup` 参数量笔误（`20 -> 32`）。
+
+### 17.2 课题二未察觉混杂清算（`experiments/matched_task2.py` → `docs/matched_task2_metrics.json`）
+
+第 8–9 节的独立语料对比遗留了与课题一相同的 `scale=5.0 vs 1.0` 与 `near_identity_init=True vs False` 混杂，且缺少三角多项式经典替身。本轮 5-seed 严格对齐基准（30-Pauli / 3 QWC，`scale="learnable", scale_init=1.0, ni=False`，`steps=400, lr=0.01`）：
+
+- `caus_q_rich30`（3,646 参，量子 **12 参 = 0.33%**）：`train 2.0992` / `val 2.4804 ± 0.0291` / `gap 0.3812` / `31.6 s/seed`；
+- `caus_classical_tanh`（3,784 参，变换 150 参）：`train 2.1435` / `val 2.4425 ± 0.0400` / `gap 0.2990` / `1.2 s/seed`；
+- `caus_classical_trig`（3,646 参，变换 **12 参**）：`train 2.0498` / `val 2.4834 ± 0.0335` / `gap 0.4335` / `1.5 s/seed`；
+- 诊断臂 `diag_unmatched_q_scale5`（仅恢复旧 `scale=5.0, ni=True`）：`train 2.0315` / `val 2.5376 ± 0.0361` / `gap 0.5062`。
+
+结论：① 旧 `scale=5.0 + ni=True` 单独拉大过拟合间隙 **`+0.1249`**（$p_{\text{Holm}}=0.0097$）；② 严格对齐后 `Q − Tanh` 验证集与间隙均不再 Holm 显著；③ 与等 12 参 `ClassicalTrig` 验证集完全无差异（`Δ=-0.0030`, $p_{\text{Holm}}=0.895$），耗却慢 **20.7×**。
+
+### 17.3 Regime III 量子原生序列建模（`experiments/benchmark_quantum_native_seq.py` → `docs/quantum_native_seq_metrics.json`）
+
+1. **轨道 1（自回归 MPS 玻恩机，`qml_lab/born_machine.py`）**：
+   - **Periodic-4**（训 $T\in\{4,6,8\} \to$ OOD $T=14$）：24 参复数 $\chi=2$ MPS 达 `KL_ID=0.0729` / `KL_T14=0.0949`（禁态率 `0.057`），显著优于同 $\chi=2$ 非负 MPS（`KL_ID=0.3667`, $p_{\text{Holm}}=0.0192$）、等 24 参更高 $\chi=3$ 非负 MPS（`KL_T14=0.3929`, $p_{\text{Holm}}=0.0247$）与 35 参 RNN（`KL_T14=0.5144`, $p_{\text{Holm}}=0.00573$）。
+   - **Dyck-1**（零重叠 $T=14 \to 16$）：84 参有符号 $\chi=6$ MPS 达 `NLL_ID=0.4415` / `valid_ID=0.939` / `valid_OOD=0.856`，显著优于等 84 参非负 MPS（`NLL_ID=0.4732`, $p_{\text{Holm}}=0.000382$）与 98 参 RNN（OOD 合法率 `0.224`, $p_{\text{Holm}}=0.0144$）。
+2. **轨道 2（真正 L2 幺正 SSM，`qml_lab/quantum_ssm.py`）**：
+   - `QuantumUnitarySSM`（3q $d_H=8$，1+2 体 Pauli 哈密顿量，完备 POVM $\sum M_c = I_8$，零 MLP，PennyLane 校验 `max|Δψ|=1.21e-7`）在 **$S_3$ 群词问题**（$T=6 \to 12, 16$）与**确定性延迟回忆**（`pad=4 -> 8`）上均达 **`1.000 ± 0.000`**，显著击败 L0（`0.156` / `0.250`）、修复后 L1（`0.291` / `0.750`–`0.900`）与 RNN（`0.270` / `0.500` OOD），并与同维经典 `OrthogonalSSM`（`1.000` / `0.950` OOD）一致。
+   - **边界**：1D MPS 为经典多项式 $O(TV\chi^3)$ 的量子启发干涉表征优势；指数级希尔伯特空间 L2 SSM 与 QSVT 注意力均依赖容错硬件（FTQC / QRAM）。
+
 

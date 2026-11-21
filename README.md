@@ -1,4 +1,4 @@
-# 量子 LLM · 课题一：模 112 加法；课题二：玩具级字符语言模型与方法学诊断
+# quantum-llm · 量子序列建模方法学审查与原生基准
 
 [English](README_EN.md) | 简体中文
 
@@ -6,656 +6,115 @@
 ![PennyLane](https://img.shields.io/badge/PennyLane-0.45-9b59b6)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Toy scale](https://img.shields.io/badge/scale-toy%20%2F%20not%20an%20LLM-orange)
+![Scope](https://img.shields.io/badge/scope-toy%20%2F%20methodological%20benchmark-orange)
 
-> **先把边界说清楚：这不是能对话的大语言模型。** 本仓库把参数化量子电路（VQC）当作**一个可微分变换层**嵌进字符级自回归语言模型，用严格受控的 5 随机种子实验剖析「信息进出量子层的秩瓶颈」与「因果上下文窗口对二元语法熵墙的破局」，并与同结构经典基线和无量子（`Identity`）消融组对比全语料交叉熵、留出验证集困惑度与训练耗时（该验证集与训练集高度重叠，见下方语料审查）。
+> **边界声明**：本仓库**不是**可对话的大语言模型，而是纯 CPU 状态向量 / 张量网络模拟器上的受控方法学基准，系统区分 **Regime II（经典主干中嵌入小参数 VQC 瓶颈）** 与 **Regime III（量子原生序列建模：MPS 玻恩机 + 真正 L2 幺正状态空间模型）**。完整审查日志见 [`docs/REVIEW.md`](docs/REVIEW.md)，架构规范见 [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md)，姊妹仓库见 [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist)。
 
-当前硬件与状态向量模拟器条件下（态空间维数 $2^n$），不存在可行的十亿参数级量子 LLM。这里做的是**玩具级 QNLP 可行性验证与方法学审查**（词表 31 字符、训练集 1668 字符（同一段 417 字符重复 4 遍）+ 同词表留出验证集 382 字符（k=4 上下文 90.2% 训练时已见过）、序列长 16、4 qubits）。完整方法学审查报告见 [`docs/REVIEW.md`](docs/REVIEW.md)，姊妹仓库见 [quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist)。
-> **课题划分（2026-11-13）**：第一个课题改为**可穷举、零重叠的模 112 加法**（见下一节），上述字符级语言模型保留为课题二；两者共用同一套量子层/经典层受控对照框架。
 ---
 
-## 对照口径修正（2026-11-16，优先于下文所有数值）
+## 核心研究问题 ↔ 实验 ↔ 结论一览
 
-> **历史「量子 vs 经典」对照不是干净的消融**。本页所有相关数值与结论一律
-> 降级为「不同配置之间的观察」，不能据以判断量子层有无作用 —— 既不能说
-> 「无量子优势」，也不能说「有」。详见 [`docs/REVIEW.md` 第 14 节](docs/REVIEW.md)。
->
-> 具体不一致（`experiments/train_addition.py` 的 `GROUP_SPECS`）：
-> ① 读出缩放 `scale` 量子臂 `5.0` / 经典臂 `1.0`；
-> ② 初始化 `near_identity_init` 量子 `True` / 经典 `False`；
-> ③ 中间层容量 **12** 个旋转角 vs **240** 个线性权重。
-> 另外 grokking 长训练那条线的 `RICH/*` 条件实际是 `add_classical`（经典臂），
-> 且量子臂只有 2500 步 / 2 seed，与经典臂 40000 步 / 5 seed 不可比；
-> 课题一评估只取最后位置 logits（`answer_logits`），并未做自回归生成。
->
-> **已修**：`--matched` 严格对照模式，由 `assert_matched()` 在代码层断言两臂
-> 除 `transform_type` 外 **13 项逐项相同**（同一初值的可学习 `out_scale`、
-> 两臂都不加小初始化补丁、不启用增益不等的 `LayerNorm`），并由
-> `annotate_matched()` 在报差值前强制检查装置有效性。
->
-> **装置诊断（[REVIEW §14.7](docs/REVIEW.md)，归档
-> [`docs/matched_calibration.json`](docs/matched_calibration.json)）**：
-> v1 的「小初始化补丁」本身让两臂初始输出 std 差 **16 倍**；v2 的
-> `LayerNorm` 对两臂有效增益 `2.57× / 40.31×`，**不是对称操作**，两臂一起
-> 退化到 `0.0062`；v3 两臂都退回各自框架默认初始化、无补丁无新增层，
-> std `0.258 / 0.286`（`0.9×`）终于对齐，但统一 `lr=0.015` 下经典臂仍有
-> 4/5 seed 卡在随机基线。三版归档 (`matched_v1_no_norm_metrics.json` /
-> `matched_metrics.json` / `matched_v3_metrics.json`) 的
-> `device_validity.valid` 均为 `false`，**只能用于诊断配置，不得比较两臂优劣**。
->
-> **共同可行域（不是各自挑最优）**：公开记录的小预算网格
-> （`experiments/matched_calibration.py --grid`）发现经典臂学不学动主要由
-> **lr** 决定（`0.003` 下 4 个 scale 全部 2/2 学动，`0.015/0.03` 几乎全塌）；
-> **正式 5 seed × 2000 步（[`docs/matched_v4_metrics.json`](docs/matched_v4_metrics.json)）**：
-> 量子 `0.3251±0.0464`、经典 `0.2767±0.0917`，两臂各 **5/5 seed** 越过
-> `2×1/112` 门槛，`device_validity.valid = true` —— **装置第一次有效**。
-> 主指标 val acc 配对 Δ `+0.0485`，CI `[-0.0677, +0.1647]` 跨 0
-> （`p=0.311`）；Holm 后唯一显著项是 `generalization_gap`
-> （`+0.0156`，量子臂训练–验证间隙更大），**不是准确率优势**。
-> 容量差 12 vs 240 与「量子层不参与序列依赖」仍未消除，所以这里得到的
-> 只是「两种变换实现都真的学动了」，**不能表述为量子层因果效应**。
->
-> **容量匹配（[§14.8](docs/REVIEW.md)）**：量子 `n_layers=20` 时 240 参数
-> = 经典 240（单步 `0.3865 s`，2000 步约 `0.21 h/seed`）；但层数同时改变
-> 线路深度 / 表达力 / 梯度尺度，参数量相等 **不等于唯一自变量已隔离**。
-> 归档 [`docs/capacity_matched_pilot.json`](docs/capacity_matched_pilot.json)。
->
-> **更靠前的问题（[§15](docs/REVIEW.md)）**：量子层逐位置独立、不承载跨步
-> 状态，课题一还是一次性分类 —— 再干净的对照也只测到「两种 pointwise
-> 非线性」。已落地 L1 量子循环原型 `qml_lab/recurrent.py` 与
-> [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md)；
-> 短预算 pilot 已验证 P1–P4 结构契约 4/4，但延迟回忆上量子两臂仍停在
-> 随机基线，**状态功能有效性尚未证明**（见 [1f 节](#1f-l1-短预算-pilot结构契约过关但状态还没被证明用上)）。
-> 本节所有归档统一标为「经典瓶颈基线」。
-
-## 课题一：模 112 加法（$\mathbb{Z}_{112}$，2026-11-13）
-
-> **第一个课题定位为计算 $n+m$**：数值域 0~111，加法在模 112 意义下封闭，
-> `111+1=0`（回绕）、`0+0=0`（加法恒等元）。词表 **117 = 112 个数字 token
-> + `+ - * /` 四个运算符 + `=` 一个等号**；本轮只生成加法样本，其余运算符
-> 占词表位留给后续课题（`/` 在 $\mathbb{Z}_{112}$ 非域上不总有唯一解）。
-
-| 等式 | token 序列 |
-| --- | --- |
-| `111+1=0` | `[111, 112, 1, 116, 0]` |
-| `0+0=0` | `[0, 112, 0, 116, 0]` |
-
-模型只看 `[a][+][b][=]` 四个 token（恰为 `context_window=4`），在答案位预测
-`c` —— **112 类单 token 分类**，随机基线 $1/112 = 0.0089$。全空间
-$112\times112=12544$ 个有序对按 `(a,b)` 组合严格 disjoint 切分：训练
-10035 / 验证 2509，**验证集 k=4 上下文在训练集的覆盖率为 0.0%**
-（历史语料 90.2% → 独立语料 38.7% → 此处 0%），是真正的未见组合泛化检验。
-
-![模 112 加法：训练曲线与最终准确率](docs/figures/addition_accuracy.png)
-
-| 组 | train acc | 未见组合 val acc | val loss | 耗时 / seed |
-| --- | --- | --- | --- | --- |
-| `add_q_rich48`（量子） | `0.1924` | **`0.1817 ± 0.0423`** | `2.2880` | `440.6 s` |
-| `add_classical`（经典变换层；**非干净消融**，见上方口径修正） | `0.1496` | `0.1365 ± 0.0410` | `2.6587` | `17.5 s` |
-
-5 seed × 2000 步，两臂答案位准确率都显著高于随机基线（二项检验
-$p\approx0$），确认学到的是**组合泛化**而非记忆；但准确率仅 18% / 14%、
-曲线仍在上升，**任务远未解决**。**3 个预先指定的主检验 Holm 校正后
-0 个显著**：val 准确率配对 `+0.0451`、95% CI `[-0.0003, +0.0905]` 跨 0
-—— 量子臂数值更高，但**该差值混有 `scale` / 初始化 / 容量三项差异，
-不能归因于量子层**（见上方口径修正）。`val_loss` 差值
-`−0.3707` 虽在 Bonferroni 后显著，但 loss 不是主指标，且同样受上述混杂影响。
-
-**三个必须说清的前提**：① 随机 embedding 下扫过 3 个学习率、跑到
-25.5 epochs，两臂都卡在随机基线，因此给数字 token 加了**两臂共享的循环
-角度编码** $[\sin(2\pi n/112),\cos(2\pi n/112),\sin(4\pi n/112),\cos(4\pi n/112)]$
-作为经典先验 —— 它对**本仓库这个架构**是让任务可学的必要设计，**不是量子优势**；
-第 12 节的长训练扫描说明：换一个已知能 grok 的二次 MLP，从同样的随机
-embedding 出发、同样零重叠切分，很快就能到 >99%，即「任务本身学不动」
-是错的；但当时据此宣称「瓶颈在架构」**已在第 13 节撤回** —— 那组对照
-连记忆阶段都没完成，且两架构的 lr / wd / 数据量 / 步数四项全不同；
-② 该编码只是**初始化，不是冻结**：`nn.Embedding` 默认 `requires_grad=True`，
-Adam 每步都在更新它（第 11 节三方消融实测训练前后 RMS 漂移）；
-③ 两臂始终同配置、**都没有各自调参**（统一 `lr=0.015`）。
-
-**「把 embedding 放开再训练」的三方消融**（[REVIEW.md 第 11 节](docs/REVIEW.md)、
-[归档](docs/embedding_ablation_metrics.json)、[图](docs/figures/embedding_ablation.png)）：
-`frozen_circular`（编码初始化 + 冻结）/ `trainable_circular`（编码初始化 + 可训练，
-课题一默认）/ `trainable_random`（纯随机 + 可训练）。前两者初始权重逐位相同，
-只差一个 `requires_grad`，因此它们的差就是「放开 embedding」这一件事的净效应；
-第三者用于检查循环先验是否不可替代。
-
-**结论（5 seed × 2000 步，全量 2509 个未见组合）**：默认 `trainable_circular`
-的 embedding 本来就在训练（RMS 漂移 `0.2816` / `0.3674`），所以「放开」不是新设置，
-真正没测过的是**冻结**：
-
-| 模式 | 量子 val acc | 经典 val acc |
+| 研究问题 (RQ) | 范式 / 脚本与归档 | 受控结论（5 Seeds，Holm-Bonferroni 校正） |
 | --- | --- | --- |
-| `frozen_circular` | **`0.2418 ± 0.0488`** | `0.1839 ± 0.0427` |
-| `trainable_circular`（课题一默认） | `0.1835 ± 0.0463` | `0.1462 ± 0.0447` |
-| `trainable_random` | `0.0062 ± 0.0012` | `0.0062 ± 0.0012` |
+| **RQ1**：模 112 组合泛化加法中，4q L0 VQC 能否在严格同口径下超越经典变换层？ | Regime II · `train_addition.py --matched` ([`matched_v4_metrics.json`](docs/matched_v4_metrics.json)) | **否**。量子 `0.3251 ± 0.0464` vs 经典 `0.2767 ± 0.0917`（$\Delta=+0.0485$，CI `[-0.0677, +0.1647]`，$p=0.311$）；任务可学性由共享循环先验驱动（`0.1835` vs 无先验 `0.0062`），量子参数仅占 `12/10230 (0.12%)`。 |
+| **RQ2**：历史字符 LM 的量子过拟合间隙（`+0.3263`）是否为混杂伪影？对齐后 L0 VQC 能否超越等参三角替身？ | Regime II · `matched_task2.py` ([`matched_task2_metrics.json`](docs/matched_task2_metrics.json)) | **混杂主导 + 无优势**。历史 `scale=5.0 + ni=True` 单独拉大间隙 `+0.1249`（$p_{\text{Holm}}=0.0097$）；严格对齐后量子与 12 参 `ClassicalTrig` 验证集无差异（`2.4804` vs `2.4834`，$\Delta=-0.0030$，$p_{\text{Holm}}=0.895$），耗时却慢 **20.7×**（量子仅 `12/3646 = 0.33%`）。 |
+| **RQ3**：旧版 L1 量子循环为何在延迟回忆上停在随机基线？ | L1 诊断 · `state_channel_probe.py` ([`state_channel_probe.json`](docs/state_channel_probe.json)) | **死通道缺陷**。真实初态 $s=0, w=0$ 时 `RZ+Z` 与 `RZ+X` 导数严格为 `0.000e+00`，唯独共轭 `RZ+Y`（`1.140e-01`）与 `RY+Z`（`7.951e-01`）保持 $O(1)$；修复后 L1 延迟回忆从 `0.500` 升至 `0.750`（`RZ+Y`）/ `0.900`（`RY+Z`）。 |
+| **RQ4**：量子振幅相消干涉（MPS 玻恩机）能否在等参条件下击败禁用负振幅的经典非负 MPS 与 RNN？ | Regime III 轨道 1 · `benchmark_quantum_native_seq.py` ([`quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json)) | **是（表征/干涉优势）**。Periodic-4 上 24 参复数 $\chi=2$ MPS 在 OOD $T=14$ 的精确 KL 为 `0.0949` vs 等 24 参非负 $\chi=3$ MPS `0.3929`（$p_{\text{Holm}}=0.0247$）与 RNN `0.5144`（$p_{\text{Holm}}=0.00573$）；Dyck-1 上 84 参有符号 $\chi=6$ MPS `NLL_ID=0.4415` 显著优于等 84 参非负 MPS `0.4732`（$p_{\text{Holm}}=0.000382$）与 RNN OOD 合法率 `+63.2 pt`（$p_{\text{Holm}}=0.0144$）。 |
+| **RQ5**：真正跨步不坍缩的 L2 幺正状态空间模型（`QuantumUnitarySSM`）能否实现 OOD 非阿贝尔群状态追踪？ | Regime III 轨道 2 · `benchmark_quantum_native_seq.py` ([`quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json)) | **是（相对 L0/L1/RNN），与同维经典 $SO(d)$ 持平**。$S_3$（训练 $T=6 \to$ OOD $T=16$）与延迟回忆（OOD `pad=8`）均达 **`1.000 ± 0.000`**（0 MLP 拐杖，PennyLane 校验误差 `<2.4e-7`），显著击败 L0（`0.156`）、L1（`0.291`）与 RNN（`0.270`），并与经典 `OrthogonalSSM`（`1.000`）一致。 |
 
-放开后两臂数值一致变差（配对 `−0.0583` `[−0.1318,+0.0153]` /
-`−0.0377` `[−0.1187,+0.0433]`），但 **CI 跨 0，不能宣称显著有害**；真正显著的
-是循环先验（`+0.1773` `[+0.1200,+0.2346]` / `+0.1400` `[+0.0849,+0.1950]`）。
-纯随机 embedding 即使放开、跑满 2000 步，loss 仍停在 `4.735 ≈ ln(112)`。
-三种模式下量子−经典差 `+0.0579 / +0.0373 / +0.0000`，**9 个主检验 Holm 后
-0 个显著** —— 放开或冻结都不改变「量子层无可证实正贡献」的结论。
-另注意设计选择的影响（−5.8 pt）与量子层差异（+5.8 pt）同量级，且 2000 步
-仅约 6.4 epochs、曲线仍上升，「冻结更好」有明确的训练预算边界，不能外推。
+---
 
-![embedding 三模式消融：全量验证准确率、学习曲线、配对置信区间与结论卡](docs/figures/embedding_ablation.png)
+## 一、Regime II：严格对齐的 L0 经典主干 + VQC 基准
 
-> **图怎么读**：(a) 紫色＝量子层、蓝色＝经典层，三种 embedding 模式的全量验证
-> 准确率；(b) 是 512 条子集采样的验证曲线，**只看趋势**，数值不要和 (a) 混用；
-> (c) 六个配对差与双侧 95% CI ——「放开 − 冻结」两条都跨 0，而「圆编码 − 随机」
-> 「冻结 − 随机」不跨 0，说明决定能不能学的是循环先验，不是放开与否；(d) 是
-> 「能说什么 / 不能说什么」的结论卡。全部 5 seed，两臂同切分 / 同超参 / 同步数。
+### 1.1 课题二（独立字符语料，规范 30-Pauli / 3 QWC 读出）
 
-复现：`python experiments/train_addition.py`（约 13 分钟）；
-`--quick` 冒烟、`--probe` 1-seed 探针、`--probe --no-circular-embedding`
-消融、`--redraw-from docs/addition_metrics.json` 只重画图；
-`python experiments/embedding_ablation.py` 复现三方消融。
-完整归因与边界见 [REVIEW.md 第 10–12 节](docs/REVIEW.md)、
-[指标归档](docs/addition_metrics.json)。
+历史 `independent_corpus.py` / `robustness_check.py` 存在未察觉混杂：量子臂固定 `scale=5.0, near_identity_init=True`，经典臂 `scale=1.0, near_identity_init=False`，且缺少三角特征经典替身。`experiments/matched_task2.py` 将 13 项配置逐项断言一致（统一可学习 `out_scale` 初值 `1.0`、默认初始化、`steps=400, lr=0.01, seeds=0..4`），并与与 `quantum-mnist` 对齐的规范 30-Pauli 读出（`z+x+y+zzall+xxall+yyall`，**3 个 QWC 对易组**，旧版 48-Pauli 为 10 组）及 12 参 `ClassicalTrigBilinearLayer` 严格对照（[`docs/matched_task2_metrics.json`](docs/matched_task2_metrics.json)）：
 
-**这是不是 grokking？—— 长训练扫描（[REVIEW.md 第 12 节](docs/REVIEW.md)、
-[归档](docs/grokking_metrics.json)、[pilot](docs/grokking_pilot.json)、
-[图](docs/figures/grokking_scan.png)）**：按 `(a,b)` 组合留出 + 随机可训练
-embedding 确实是 Power et al. (2022) 的 grokking 原始设置；我们那个循环角度
-编码恰好是 Nanda et al. (2023) 发现模型**最终自己学会**的傅里叶表征，
-等于把终点当起点手工塞了进去。本轮核实文献并实跑三段式扫描：
-1-seed pilot（19 条件 × 20000 步）→ 5-seed 确认（40000 步）→ 量子臂
-有限预算示意，另加一个已知可 grok 的二次 MLP **正对照**与傅里叶
-progress measure。
+| 臂 | 总参 (量子 / 经典变换) | QWC 组 | 初始读出 std | Train Loss | 独立 Val Loss | 泛化间隙 (Val−Train) | 最终 scale | 耗时 / seed |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `caus_q_rich30`（严格对齐） | `3,646` (**12** = `0.33%` / 0) | **3** | `0.3261` | `2.0992 ± 0.0074` | `2.4804 ± 0.0291` | `0.3812 ± 0.0354` | `1.57` | `31.6 s` |
+| `caus_classical_tanh`（对齐） | `3,784` (0 / 150) | 0 | `0.3951` | `2.1435 ± 0.0115` | `2.4425 ± 0.0400` | `0.2990 ± 0.0399` | `0.93` | `1.2 s` |
+| `caus_classical_trig`（等 12 参） | `3,646` (0 / **12**) | 0 | `0.3765` | `2.0498 ± 0.0213` | `2.4834 ± 0.0335` | `0.4335 ± 0.0275` | `1.30` | `1.5 s` |
+| `diag_unmatched_q_scale5`（诊断） | `3,645` (12 / 0) | 3 | — | `2.0315 ± 0.0271` | `2.5376 ± 0.0361` | `0.5062 ± 0.0415` | `5.00` | `31.2 s` |
 
-![加先验的长训练扫描：探索网格、5 seed 曲线、正对照相变与量子臂成本](docs/figures/grokking_scan.png)
+- **混杂归因证伪**：仅恢复历史 `scale=5.0 + ni=True` 就使同一量子线路的过拟合间隙上升 **`+0.1249`**（$p_{\text{Holm}}=0.009705$）、验证 loss 恶化 `+0.0572`（$p_{\text{Holm}}=0.0413$）。
+- **对齐后无量子特性优势**：对齐后 `Q − Tanh` 验证 loss（`+0.0379`, $p_{\text{Holm}}=0.289$）与间隙（`+0.0822`, $p_{\text{Holm}}=0.095$）均不再显著；与精确 12 参 `ClassicalTrig` 相比，验证 loss 几乎完全一致（`Δ=-0.0030`, $p_{\text{Holm}}=0.895$），说明历史差异源自**一/二阶三角单项式基与固定 5× 缩放**，而非量子效应。
 
-> **图怎么读**：(a) 绿色＝二次 MLP 正对照（跳到近 1.0 的全是它们）、橙色＝预选的
-> 本仓库条件、灰色＝其余本仓库配置；这是 **1 seed 探索性**扫描，不作结论。
-> (b) 5 seed 确认曲线（子集采样），加先验两组稳步学、正对照突然跳升。(c) 正对照
-> 训练准确率先满分、验证准确率后跳升，绿色虚线是傅里叶进度指标 R²。(d) 量子臂
-> 单步成本约为经典的 33.6×，本轮预算只跑到 2500 步。图底明确标注：第 12 节
-> 「架构缺少乘法交互」的归因已撤回，不加先验的对照见第 13 节。
+### 1.2 课题一（模 112 组合泛化加法，零 $k=4$ 重叠）
 
-| 5-seed 确认 | 步数 | val acc | grokking seeds |
-| --- | --- | --- | --- |
-| `RichQuantumLM` 随机 embedding + AdamW `wd=0.1` | 40000 | `0.0255 ± 0.0411` | **0/5** |
-| `frozen`（循环编码冻结） | 40000 | `0.4207 ± 0.0292` | 0/5 |
-| `trainable_circular`（默认） | 40000 | `0.2736 ± 0.1129` | 0/5 |
-| 二次 MLP 正对照（20% 训练数据 + `wd=1.0`） | 5000 | **`0.9944 ± 0.0006`** | **5/5** |
-| 二次 MLP 正对照（同 0.2 切分） | 5000 | `0.9983 ± 0.0002` | 0/5 |
+- **严格对齐 v4（[`docs/matched_v4_metrics.json`](docs/matched_v4_metrics.json)，5 seeds × 2000 步，`lr=0.003, scale_init=5.0`）**：量子 `0.3251 ± 0.0464` vs 经典 `0.2767 ± 0.0917`（两臂 5/5 seed 通过装置有效性；配对 $\Delta=+0.0485$，CI `[-0.0677, +0.1647]`，$p=0.311$ 不显著；仅 `generalization_gap` 差 `+0.0156` 显著，量子过拟合间隙更大）。
+- **先验与 Grokking 边界**：三模式消融（[`embedding_ablation_metrics.json`](docs/embedding_ablation_metrics.json)）表明随机 embedding 停在 `0.0062`（≈ $1/112$），循环编码先验贡献 `+0.1773` / `+0.1400`。不加先验同超参 $10^5$ 步复验（[`grokking_no_prior.json`](docs/grokking_no_prior.json)）显示 `RICH wd=0` 处于记忆中段（`train 0.6565 / val 0.0076`）而 `MLP wd=1` 达 `val 0.9918`；早期 §12「架构缺陷」归因已在 §13 正式撤回。
 
-**⚠ 上面这段第 12 节的结论已撤回，见第 13 节。** 正确的对应关系是：
-**加循环角度先验 = 把 grokking 最终学到的 sin/cos 表征直接注入，等于跳过
-grokking；不加先验 = grokking 起跑线，得靠长训练自己长出这个表征。**
-第 12 节把问题换成了「另造一个能 grok 的二次 MLP，据此宣称本仓库架构不
-行」，且那组对照的随机 embedding **连记忆阶段都没进入**（40000 步后
-train acc `0.0288`），两架构的 lr / wd / 训练数据占比 / 步数四项还全不同，
-因此 `+0.9910` 不是干净的架构效应，不能推出「瓶颈是架构」。
-修正实验：`experiments/grokking_no_prior.py`（两架构完全同超参、$10^5$ 步）。
+---
 
-**修正复验结果（[REVIEW.md 第 13 节](docs/REVIEW.md)、
-[归档](docs/grokking_no_prior.json)、[pilot](docs/grokking_no_prior_pilot.json)、
-[图](docs/figures/grokking_no_prior.png)）**：先跑 60 条件 1-seed 网格
-（$5\ \text{lr} \times 3\ \text{wd} \times 2\ \text{vf} \times 2$ 架构 × 1.2 万步），
-再挑两组共享 `lr=0.003 / vf=0.8`、只差 `wd` 的条件做 5 seed × $10^5$ 步确认：
+## 二、L1 量子循环状态通道解析诊断
 
-![加先验 vs 不加先验：验证准确率对比、10 万步学习曲线、学习率扫描与结论卡](docs/figures/grokking_no_prior.png)
+`experiments/state_channel_probe.py`（[`docs/state_channel_probe.json`](docs/state_channel_probe.json)）同时在随机扰动 $s \sim \mathcal{N}(0, 0.1)$ 与真实首步初态 $s = 0$ 上检验 4 种门/读出基组合的 $|\partial(\sum_i \langle O_i \rangle)/\partial s|$：
 
-> **图怎么读**：(a) 橙色＝加先验、蓝色＝不加先验、绿色＝装置校验正对照，看验证
-> 集准确率；(b) 不加先验组训练准确率一路爬到 `0.66`、验证准确率贴着 `0.008`
-> 不动，即 grokking 的「记忆中、尚未泛化」；(c) 同一架构只改学习率，
-> `0.015` 几乎学不动（`0.013`）、`0.003` 最好（`0.307`），解释上一轮为何把
-> 优化器问题误判成架构缺陷；(d) 是「能说什么 / 不能说什么」的结论卡。
-> 橙色两组来自第 12 节、蓝绿来自第 13 节，超参不完全一致，(a) 只作现象对照；
-> 因果结论一律以第 13 节的同超参对照为准。
-
-| 同超参条件 | train acc | val acc | 完成记忆 | 完成泛化 |
+| 纠缠层 `init_std` | `RZ + Z` ($s=0$ / $s\sim\mathcal{N}$) | `RZ + X` ($s=0$ / $s\sim\mathcal{N}$) | `RZ + Y` 共轭 ($s=0$ / $s\sim\mathcal{N}$) | `RY + Z` ($s=0$ / $s\sim\mathcal{N}$) |
 | --- | --- | --- | --- | --- |
-| `RICH wd=0` | `0.6565 ± 0.0469` | `0.0076 ± 0.0005` | 0/5 | 0/5 |
-| `RICH wd=1` | `0.1200 ± 0.0203` | `0.0884 ± 0.0166` | 0/5 | 0/5 |
-| `MLP wd=0` | `1.0000` | `0.2679 ± 0.0160` | **5/5** | 0/5 |
-| `MLP wd=1` | `0.9987 ± 0.0006` | **`0.9918 ± 0.0030`** | **5/5** | **5/5** |
+| `0.00` | `0.000e+00` / `2.056e-09` | `0.000e+00` / `4.125e-02` | **`1.140e-01`** / **`1.135e-01`** | `7.951e-01` / `8.389e-01` |
+| `0.05`（旧版默认） | `1.837e-03` / `5.200e-03` | `4.276e-02` / `4.063e-02` | **`1.084e-01`** / **`1.093e-01`** | `7.998e-01` / `8.476e-01` |
+| `0.50` | `8.608e-02` / `9.492e-02` | `1.368e-01` / `1.302e-01` | `1.242e-01` / `1.185e-01` | `5.024e-01` / `5.030e-01` |
 
-`RICH wd=0` 的 train 从 `0.09` 一路爬到 `0.66`、val 全程 `≈0.01` ——
-**这就是不加先验 grokking 的「记忆中、尚未泛化」阶段，10 万步连第一步
-都没走完**。最硬的一条反证：同一个架构、同样不加先验，只把 `lr` 从
-`0.015` 降到 `0.003`，train acc 就从 `0.009` 变成 `0.66`，所以上一轮的
-「架构瓶颈」至少一大半是超参没调。**现在仍不能下架构结论**：grokking
-要求先记忆，rich 连 `train≥0.95` 都没到，0 相变是必然结果、不构成证据；
-要谈架构必须先把 rich 训练到 `train≈1.0` 再看 val 是否跳变。
-（stage2 `eval_every=2000` 会漏掉正对照在 1000–1500 步的突发跳变，
-故严格 `grokking_observed` 全 0/5 是采样伪影；装置有效性由 `val 0.9918`
-与 stage1 `eval_every=500` 的 `grok=True` 证明。）
-
-**以下为第 12 节的附带结论与边界，仍然有效**：冻结在 40000 步后仍未反转（`0.4207` vs `0.2736`，`p=0.041` 但 Holm
-后 `p=0.082` 不显著），而前 4 维 sin/cos 相位保持度恒 `1.000` vs 降到
-`0.614`、与准确率相关（探索性 `r=0.69`），解释了第 11 节的机制。
-量子臂实测 `0.1264 s/步` vs 经典 `0.0038 s/步`（**33.6×**），
-$10^5$ 步需 `3.5 h` vs `0.1 h`；本轮量子只跑 2500 步（2.5%），仅作成本示意。
-**边界**：pilot 是 1-seed 探索且存在选择偏差；相变条件用了 80% 留出的
-切分，干净架构比较用的是同切分那一组；这里的相变在 500~1500 步发生，
-比 transformer 文献快几个数量级，只能说现象同类。
+物理机制：`RY(x)|0⟩` 位于 Bloch 球 $XZ$ 平面，`RZ(s)` 首先将矢量推向 $Y$ 轴（$\langle Y \rangle = \sin x \sin s$），故 $s=0, w=0$ 时 $Z$ 与 $X$ 的一阶导数均恒为 0，唯独 `PauliY` 读出保持 $O(1)$ 灵敏度。`qml_lab/recurrent.py` 已修复默认配置为 `RZ+Y (init_std=1.0)`、修正 `generate()` 首尾 token 重复喂入与 `temperature` 采样、以及 `detach_state=True` 阻断末步头梯度的问题。
 
 ---
 
-## 课题二：字符语言模型 · 快速结论（5-Seed 受控实验结果）
+## 三、Regime III：量子原生序列建模基准
 
-> **⚠ 2026-11-07 语料审查（[REVIEW.md 第 7 节](docs/REVIEW.md)，[`audit_corpus.py`](experiments/audit_corpus.py)）**：训练集 1668 字符是同一段 417 字符文本**重复 4 遍**（unique 4-gram 仅 22.4%）；所谓「独立未见句验证集」在模型实际使用的因果上下文长度 `k=4` 上，有 **90.2%** 的 token 上下文在训练集中出现过。因此 `val PPL 4.29` 只能读作**同分布重组句的迁移**，不是未见分布泛化，也不能作为量子层带来泛化能力的证据。原始统计见 [`docs/corpus_audit.json`](docs/corpus_audit.json)。
->
-> **✅ 2026-11-13 已补独立语料重跑（[REVIEW.md 第 8 节](docs/REVIEW.md)，[归档](docs/independent_corpus_metrics.json)）**：句级 disjoint、主题分离的新语料把 `k=4` 上下文重叠率从 **90.2% 降到 38.7%**。5-seed 受控结果显示量子层在训练集上仍显著更好（Δ=`-0.1069` nats），但在独立验证句上优势消失且方向反转（Δ=`+0.0974`，CI 跨 0），泛化间隙显著更大（`+0.2044` nats）。**量子层的优势是拟合层面的，不是泛化层面的。**
->
-> **✅ 2026-11-13 稳健性复核（[REVIEW.md 第 9 节](docs/REVIEW.md)，[归档](docs/robustness_metrics.json)）**：把独立语料扩到 **20 seed × 1200 步**，泛化间隙差值从 `+0.1433`（300 步）扩大到 `+0.3263`（1200 步），量子验证 loss 单调上升、训练 loss 单调下降 —— **不是 300 步欠拟合假象，而是持续加剧的过拟合**；5-seed 的 `+0.2044` 属小样本高估。20 seed 下独立语料的 val 差值也变为显著（`+0.0599`，Holm 后 `p=0.0022`）。
->
-> **⚠ 但有语料边界**：换用 `k=4` 覆盖率仅 0.24%、字符分布 JS 散度 0.2538 的极端合成语料后，两臂验证 loss 都崩到 5+ nats，gap 差值 `+0.5602` 的 CI `[-0.1406, +1.2609]` 跨 0、Holm 后不显著。**结论只在这两份自写英文语料上成立，不推广为普遍的「量子泛化更差」。**
+归档于 [`docs/quantum_native_seq_metrics.json`](docs/quantum_native_seq_metrics.json)（5 seeds，严格独立 Train/Val/Test + OOD 长度外推，Holm 校正）。
 
-> **方法学审查要点（详见 [`docs/REVIEW.md`](docs/REVIEW.md)）**：
-> 1. **为什么初版模型（`51e3ad4`）卡在 loss `~2.5` 且必然生成 `A qubit can hold the the the...`？**
->    初版 `TinyLM` 把 `(B, T, Q)` 直接展平为 `(B*T, Q)` 逐位置独立过变换层，位置 $t$ 之间**无任何跨时间步交互**，`--seq-len 16` 实际退化为 **$k=1$ 无记忆二元语法（Bigram）模型**。在该语料上，任意 $k=1$ 模型的信息论交叉熵下界为 **`1.9701` nats（PPL `7.17`）**，且精确 $k=1$ 查表 Oracle 的贪心解码必然陷入 `" the"` 的 4 字符死循环。
-> 2. **为什么初版报告的 `0.032` nats 差异不可信？**
->    初版直接取末步单个随机 mini-batch（128 tokens）的瞬时 loss，步间标准差达 `0.11` nats（极差 `0.275` nats），噪声是被测差异的 8 倍；且两组使用了不同 batch 种子（`seed` vs `seed+1`）和未对齐的初始权重。
-> 3. **如何破局？**
->    将 4-qubit 读出从 4 个 `PauliZ` 扩展至 **48 个正交单比特与两体 Pauli 观测量**（解除 `Linear(4, 31)` 的秩-4 瓶颈），并引入**严格因果上下文编码器（$k=4$ 窗口，`CausalContextEncoder`）**，5-seed 训练集全语料确定性 loss 从 **`2.3864 ± 0.0553`** 降至 **`0.8271 ± 0.0717` nats**（困惑度从 **`10.89`** 降至 **`2.29`**），留出验证集困惑度从 **`10.96`** 降至 **`4.29`**（同分布重组句迁移，非未见分布泛化），贪心生成成功走出 `" the"` 死循环。
+### 3.1 轨道 1：自回归张量网络玻恩机（`qml_lab/born_machine.py`）
 
-### 1. 语料信息论条件熵下界 $H(C_{t+1} \mid C_{t-k+1..t})$
+以精确转移矩阵收缩计算玻恩概率 $P(x) = |\langle x|\psi\rangle|^2 / \langle\psi|\psi\rangle$（$\sum_x P(x) = 1$ 精确归一，支持精确祖先采样），与**单变量受控经典基线 `ClassicalNonNegMPS`**（相同拓扑、非负实数张量，禁用相消干涉，采用公平 `softplus^{-1}` 稀疏初始化）及 `ClassicalCausalRNNLM` 对照：
 
-| 上下文阶数 $k$ | 对应模型能力 | 唯一上下文数 | 渐近条件熵 $H$ (nats) | 理论最低 PPL | 窗口 ($T=16$) 下界 | 窗口最低 PPL |
-| --- | --- | --- | --- | --- | --- | --- |
-| $k = -1$ | 均匀盲猜 $\ln V$ | 1 | `3.4340` | `31.00` | `3.4340` | `31.00` |
-| $k = 0$ | 单字符频率（Unigram） | 1 | `2.8493` | `17.28` | `2.8493` | `17.28` |
-| **$k = 1$** | **逐位置模型（`context_mode="token"`）** | **31** | **`1.9701`** | **`7.17`** | **`1.9701`** | **`7.17`** |
-| $k = 2$ | 2 字符因果窗口 | 183 | `0.7938` | `2.21` | `0.8673` | `2.38` |
-| **$k = 4$** | **4 字符因果窗口（`context_mode="causal"`）** | **373** | **`0.1000`** | **`1.11`** | **`0.2680`** | **`1.31`** |
-| $k = 8$ | 8 字符因果窗口 | 416 | `0.0033` | `1.00` | `0.2005` | `1.22` |
-
-### 2. 11 组 × 5 Seeds 受控实验汇总（300 steps, `seeds=[0,1,2,3,4]`）
-
-复现脚本：`python experiments/diagnose_llm.py`，原始数据归档于 [`docs/llm_diagnosis_metrics.json`](docs/llm_diagnosis_metrics.json)。同模式各组共享逐位一致的初始前端与同维度分类头权重（SHA256 校验 5/5 seed 全部通过）及完全一致的 mini-batch 序列：
-
-| 组 ID | 上下文模式 | 变换层与读出规格 | 参数量 | 读出维 | Train Eval Loss (nats) | Train PPL | Held-out Val Loss | Val PPL | 平均耗时 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `tok_q_legacy` | Token ($k=1$) | 4q `PauliZ`，`scale=1.0`（初版基线） | 291 | 4 | `2.3864 ± 0.0553` | `10.89 ± 0.61` | `2.3929 ± 0.0491` | `10.96` | `5.90 s` |
-| `tok_q_scaled` | Token ($k=1$) | 4q `PauliZ` + `tanh*π/2` + `scale=5.0` | 291 | 4 | `2.3370 ± 0.0355` | `10.36 ± 0.36` | `2.3421 ± 0.0353` | `10.41` | `5.93 s` |
-| `tok_identity` | Token ($k=1$) | **无量子恒等消融**（`Identity`） | 279 | 4 | `2.2515 ± 0.0235` | `9.50 ± 0.23` | `2.2629 ± 0.0281` | `9.61` | `0.37 s` |
-| `tok_classical` | Token ($k=1$) | 经典 `Linear(4,4) + Tanh` | 299 | 4 | `2.2893 ± 0.0307` | `9.87 ± 0.30` | `2.2946 ± 0.0347` | `9.93` | `0.46 s` |
-| `tok_q_rich24` | Token ($k=1$) | 4q **24 维读出**（`z+x+y+zzall`） | 911 | 24 | `2.0661 ± 0.0097` | `7.89 ± 0.08` | `2.0780 ± 0.0066` | `7.99` | `16.18 s` |
-| **`tok_q_rich48`** | Token ($k=1$) | 4q **48 维两体读出**（逼近 $k=1$ 下界 `1.97`） | 1655 | 48 | **`2.0631 ± 0.0148`** | **`7.87 ± 0.12`** | **`2.0774 ± 0.0139`** | **`7.98`** | `37.41 s` |
-| `caus_q_z` | Causal ($k=4$) | 4q `PauliZ`（4 维秩瓶颈） | 923 | 4 | `1.9850 ± 0.1262` | `7.33 ± 0.95` | `2.1403 ± 0.1155` | `8.55` | `6.36 s` |
-| `caus_identity` | Causal ($k=4$) | **无量子恒等消融**（`Identity`） | 911 | 4 | `1.6549 ± 0.0573` | `5.24 ± 0.30` | `1.9394 ± 0.0448` | `6.96` | `0.66 s` |
-| `caus_q_reup` | Causal ($k=4$) | **2 层可训练重上传** + 12 维 `z+x+y` | 1191 | 12 | `1.5135 ± 0.1253` | `4.57 ± 0.58` | `1.8598 ± 0.1606` | `6.49` | `14.33 s` |
-| `caus_classical` | Causal ($k=4$) | 经典 `Linear(4,48)+Tanh` + `MLP` 头 | 4867 | 48 | `1.1483 ± 0.0617` | `3.16 ± 0.20` | `1.6266 ± 0.1166` | `5.11` | `0.90 s` |
-| **`caus_q_rich48`** | **Causal ($k=4$)** | **4q 48 维两体读出 + `MLP` 头** | **4639** | **48** | **`0.8271 ± 0.0717`** | **`2.29 ± 0.16`** | **`1.4494 ± 0.1290`** | **`4.29`** | `37.76 s` |
-
-![5-Seed 诊断实验对比图](docs/figures/lm_diagnosis.png)
-
-**关键配对差值（双侧 95% Student-$t$ 置信区间，$n=5$，负值表示前者 Loss 更低）**：
-> **口径**：以下均为未校正的单组配对 CI，未做多重比较校正；且留出验证集在 $k=4$ 上下文上与训练集重叠 90.2%，所有涉及 val 的差值只能读作同分布重组句的迁移，不是独立泛化证据（见上方语料审查）。
-- **扩宽读出（Token 48 维 vs 4 维）**：`tok_q_rich48 - tok_q_scaled = -0.2738 ± 0.0384` nats，95% CI `[-0.3215, -0.2262]`（**显著**，5/5 seed 为负，逼近 $k=1$ 理论下界 `1.9701`）。
-- **4 维量子读出的负贡献**：`tok_q_scaled - tok_identity = +0.0855 ± 0.0490` nats，95% CI `[+0.0246, +0.1464]`（**显著**，单比特 Z 读出比直接去掉量子层更差）。
-- **因果窗口破壁（$k=4$ vs $k=1$）**：`caus_identity - tok_identity = -0.5966 ± 0.0655` nats，95% CI `[-0.6779, -0.5152]`（**显著**）。
-- **可训练数据重上传（12 维 vs 4 维 Z）**：`caus_q_reup - caus_q_z = -0.4716 ± 0.1061` nats，95% CI `[-0.6033, -0.3398]`（**显著**）。
-- **因果两体量子读出 vs 恒等消融**：`caus_q_rich48 - caus_identity = -0.8279 ± 0.0787` nats，95% CI `[-0.9256, -0.7301]`（未校正显著；验证集 `-0.4900 [-0.6986, -0.2814]` 同为负，但因语料重叠不能解读为泛化优势）。
-- **因果两体量子读出 vs 同结构 4 维瓶颈经典基线**：`caus_q_rich48 - caus_classical` 在训练集上为 **`-0.3212 ± 0.1216`**（95% CI `[-0.4722, -0.1703]`，未校正显著），但在留出验证集上为 `-0.1772`（95% CI `[-0.4019, +0.0475]`，**跨 0 不显著**），且量子模拟耗时慢约 **42 倍**（`37.76s` vs `0.90s`）。
-
----
-
-## 课题二 · 独立语料重跑（2026-11-13，5 seeds）
-
-第 7 节指出旧留出集不足以支撑泛化结论；本节是补齐后的结果。复现：
-`python experiments/independent_corpus.py`（约 2 分钟，`--quick` 为冒烟）。
-语料见 [`qml_lab/corpus_independent.py`](qml_lab/corpus_independent.py)，
-完整归档见 [`docs/independent_corpus_metrics.json`](docs/independent_corpus_metrics.json)，
-对比图见 [`docs/figures/independent_corpus.png`](docs/figures/independent_corpus.png)。
-
-新语料：训练集 3171 字符 / 44 句互不重复，验证集 947 字符 / 14 句主题完全不同（航海、烘焙、地质、天气、园艺），
-**句级 disjoint**、验证集零 UNK、新 word-bigram 占 94.1%；训练集 k=4 条件熵下界从 `0.1000` 升到 `0.3309` nats，任务显著变难。
-
-![独立语料覆盖率与 5-seed loss 对比](docs/figures/independent_corpus.png)
-
-| 组 | train loss | 独立 val loss | val PPL | 泛化间隙 | 墙钟 / seed |
-|---|---|---|---|---|---|
-| `caus_q_rich48`（量子） | **`2.1045 ± 0.0200`** | `2.5756 ± 0.0692` | `13.164` | `0.4711` | `46.2 s` |
-| `caus_classical`（经典替身） | `2.2115 ± 0.0169` | **`2.4782 ± 0.0385`** | **`11.926`** | **`0.2667`** | `1.3 s` |
-
-配对差值（量子 − 经典，`n=5`，4 检验 Bonferroni）：train `−0.1069`（FWI CI `[-0.1568, -0.0570]`，**显著**）；
-独立 val `+0.0974`（FWI CI `[-0.0656, +0.2604]`，不显著）；
-**泛化间隙 `+0.2044`**（FWI CI `[+0.0436, +0.3651]`，**显著**）。
-
-**结论**：旧语料上量子−经典的 val 差值为 `−0.1772`（不显著），独立语料上变成 `+0.0974`（仍不显著）——
-90.2% 的上下文重叠确实把 val 伪装成了泛化能力。量子层的可复现优势只在训练集成立；
-独立验证句上经典替身数值更好且泛化间隙显著更小。不宣称量子优势，也**不**宣称量子显著更差
-（两个 val 主检验的 CI 都跨 0）。跨语料绝对 loss 不可逐位比较（词表 29 vs 31、任务难度不同）；
-验证集仍共享 38.7% 的功能 4-gram，不是严格 OOD。
-
----
-
-## 课题二 · 稳健性复核（2026-11-13，20 seeds × 1200 步 + 极端语料）
-
-第 8 节的 `n=5 / 300 步` 结论可能只是欠拟合假象或单一语料偶然。复现：
-`python experiments/robustness_check.py`（默认 8 workers；`--quick` 为冒烟）。
-完整结果见 [REVIEW.md 第 9 节](docs/REVIEW.md)、[归档](docs/robustness_metrics.json)
-与 [三面板图](docs/figures/robustness_check.png)。
-
-![稳健性复核：间隙轨迹、验证 loss 轨迹、跨语料差值](docs/figures/robustness_check.png)
-
-| 检验 | 结果 | 判定 |
-|---|---|---|
-| 可复现性 | 1200 步训练的第 300 步检查点与第 8 节 seed 0–4 逐位一致（`max abs diff = 0`） | 两节数字可直接对照 |
-| 效应量 | 5-seed gap `+0.2044` → 20-seed `+0.1433`（seed 0–4 子集仍为 `0.2044`） | 小样本高估约 43% |
-| 收敛性 | gap 差值 `+0.0758`(100 步) → `+0.1433`(300 步) → `+0.3263`(1200 步)，Holm 后仍显著 | **不是欠拟合，是持续扩大的过拟合** |
-| 验证 loss | 20-seed 下 val 差值 `+0.0599`(300 步, `p=0.0022`) / `+0.1774`(1200 步)，Holm 后显著 | 第 8 节「不宣称显著更差」收紧为「该语料上显著更差」 |
-| 极端语料 | 新 `synthetic` 语料 `k=4` 覆盖率 0.24%、JS 0.2538；两臂 val loss 均 5+ nats，gap `+0.5602` CI 跨 0 | 压力测试超出有效范围，**结论有语料边界** |
-
-量子 val loss 从 step 100 起单调上升 `2.5305 → 2.7431`，train loss 持续下降
-`2.2982 → 1.8922`，说明训练充分；经典 val 仅 `2.4887 → 2.5657`。
-51 个检验 Bonferroni 后 35 个显著，6 个主检验 Holm 后 4 个显著（全在独立语料）。
-量子 `256 s/seed` vs 经典 `7.7 s/seed`。
-
-**两臂始终同配置、都没有各自调参**；补调参对照是下一步最该做的实验。
-不宣称量子优势，也不把「该语料上显著更差」推广为普遍结论。
-
----
-
-## 能做什么，不能做什么
-
-- **不是 LLM**：字符级词表 31、序列长 16、内置语料 1668 字符，没有自注意力或大规模预训练，不能对话。
-- **不宣称通用量子优势**：`caus_q_rich48` 在训练集上优于 `caus_classical` 的前提是两者都被迫通过人为设定的 **4 维瓶颈（`n_qubits=4`）**，此时 48 个两体 Pauli 观测量提供了显式的二次三角单项式展开；但在留出验证集上两者差异统计不显著，且该验证集 90.2% 的 k=4 上下文在训练时已见过，不能作为泛化证据；若解除 4 维瓶颈，纯经典网络快 40 倍以上、loss 更低。**换用 k=4 重叠率仅 38.7% 的独立语料后（见独立语料重跑一节）**，量子层在训练集上的优势仍显著，但独立验证集上经典替身反而数值更好、泛化间隙显著更小。**扩到 20 seed 并训练 1200 步后（见上一节）**，该泛化间隙差值扩大到 `+0.3263` 且 Holm 后仍显著，独立验证 loss 差值也变为显著；但在 `k=4` 覆盖率 0.24% 的极端合成语料上未复现，因此不推广为普遍结论。
-- **模拟器的内存与测量墙**：`default.qubit` 状态向量维度为 $2^n$；解析模式下同时读出 48 个 Pauli 期望无需采样，但真机硬件需按对易组（QWC）拆分并增加 shots 以控制采样方差。
-- **完全离线可复现**：语料与留出验证集均内置，无需真机凭证或联网下载。
-
----
-
-## 目录结构
-
-```
-quantum-llm/
-├── README.md
-├── LICENSE                         # MIT
-├── requirements.txt
-├── qml_lab/
-│   ├── utils.py                    # 随机种子、路径、JSON、参数量、终端表格
-│   ├── data.py                     # 内置训练/留出验证语料、经验条件熵下界、可复现 batch 生成器
-│   ├── arithmetic.py               # 课题一：117-token 词表、Z_112 运算、穷举/disjoint 切分、答案位评估与循环编码
-│   ├── corpus_independent.py       # 两份语料 (independent / synthetic) + 重叠率与分布散度工具
-│   ├── quantum.py                  # PennyLane VQC、多观测量 (make_rich_layer) 与可训练重上传
-│   ├── models.py                   # CausalContextEncoder、TinyLM 与受控对照模型 RichQuantumLM（L0，逐位置变换）
-│   ├── recurrent.py                # L1 架构原型：测量反馈型量子循环 + 同接口经典 RNN 替身
-│   ├── train.py                    # 自回归训练循环、全语料确定性评估 (evaluate_lm) 与贪心解码
-│   └── viz.py                      # 训练曲线与诊断图绘制
-├── experiments/
-│   ├── train_llm.py                # 单组/多 seed 受控量子 vs 经典对照脚本
-│   ├── diagnose_llm.py             # 11 组 × 5 seeds 系统方法学诊断与消融实验
-│   ├── audit_corpus.py             # 语料审查：训练/验证集 n-gram 上下文重叠率
-│   ├── independent_corpus.py       # 独立语料 5-seed 受控重跑（量子 vs 经典 + 配对检验）
-│   ├── robustness_check.py         # 20-seed 收敛扫描 + 极端语料稳健性复核（Holm/Bonferroni）
-│   ├── train_addition.py           # 课题一：模 112 加法 5-seed 量子 vs 经典受控对照
-│   ├── embedding_ablation.py       # 课题一补：冻结/放开/无先验 三模式 embedding 对照
-│   ├── grokking_scan.py            # 课题一补 2：grokking 长训练扫描 + 傅里叶 progress measure + 正对照
-│   ├── grokking_no_prior.py        # 课题一补 3：修正「不加先验 = grokking」，两架构完全同超参的 1e5 步复验
-│   ├── matched_calibration.py      # 严格对照的装置诊断 + 公开记录的最小调参网格
-│   ├── capacity_matched.py         # 容量匹配 pilot：n_layers 1→20 的参数量 / 初始行为 / 单步成本
-│   ├── recurrent_pilot.py          # L1 短预算 A0/A1 pilot：P1–P4 契约、状态消融、延迟回忆、计时与内存
-│   └── state_channel_probe.py      # L1 状态通道解析诊断：RZ 相位 + Z 读出的梯度压制（无训练）
-├── tests/smoke_test.py             # 离线契约与因果性测试（含末字符覆盖、零未来泄漏、权重对齐、P1–P4、pilot 口径、状态通道）
-├── docs/
-│   ├── REVIEW.md                   # 完整方法学审查（§7–16：语料 / 加法 / embedding / grokking / 对照口径 / 架构资格 / L1 pilot）
-│   ├── ARCHITECTURE_PROPOSAL.md    # L0/L1/L2 架构层级、P1–P4 判据、消融设计与成本风险
-│   ├── DEV_NOTES.md                # 本机环境与复现备注
-│   ├── llm_diagnosis_metrics.json  # 5-seed 诊断实验完整归档数据
-│   ├── corpus_audit.json           # 旧语料重叠统计归档
-│   ├── independent_corpus_metrics.json # 独立语料 5-seed 重跑归档
-│   ├── robustness_metrics.json     # 20-seed 收敛轨迹与跨语料稳健性归档
-│   ├── addition_metrics.json       # 课题一：模 112 加法 5-seed 受控对照归档
-│   ├── embedding_ablation_metrics.json # 课题一补：三模式 embedding 对照归档
-│   ├── matched_v1_no_norm_metrics.json # 装置 v1（字段一致 / 无归一化，无效）
-│   ├── matched_metrics.json        # 装置 v2（LayerNorm，无效）
-│   ├── matched_v3_metrics.json     # 装置 v3（默认初始化 / lr=0.015，无效）
-│   ├── matched_v4_metrics.json     # 装置 v4（共同可行域 lr=0.003，以 device_validity 为准）
-│   ├── matched_calibration.json    # 四套装置的初始行为诊断 + 两阶段标定网格
-│   ├── capacity_matched_pilot.json # 容量匹配 pilot（n_layers 1/5/10/20）
-│   ├── recurrent_pilot.json        # L1 短预算 pilot：P1–P4 / 状态消融 / 延迟回忆 / 成本与内存 / reporting_scope
-│   ├── state_channel_probe.json    # L1 状态通道解析梯度诊断（候选机制，非训练结论）
-│   ├── grokking_pilot.json         # 1-seed 超参 pilot（探索性，不作结论）
-│   ├── grokking_metrics.json       # 5-seed 长训练 / 相变 / 成本外推归档
-│   ├── grokking_no_prior_pilot.json # 修正轮：60 条件 1-seed 同超参网格（探索性）
-│   ├── grokking_no_prior.json      # 修正轮：5-seed × 1e5 步确认归档
-│   └── figures/                    # 实测对比图 (addition_accuracy.png, embedding_ablation.png, grokking_scan.png, grokking_no_prior.png, ...)
-└── results/                        # 运行产物（gitignore）
-```
-
----
-
-## 安装与快速开始
-
-要求 Python 3.11+，纯 CPU 即可运行全部实验：
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-### 1. 运行离线契约测试与快速冒烟验证
-
-```bash
-.venv/bin/python tests/smoke_test.py
-.venv/bin/python experiments/train_llm.py --quick
-.venv/bin/python experiments/diagnose_llm.py --quick
-.venv/bin/python experiments/train_addition.py --quick
-```
-
-### 1b. 复现课题一（模 112 加法）
-
-```bash
-.venv/bin/python experiments/train_addition.py                          # 5 seed x 2000 步，约 13 分钟
-.venv/bin/python experiments/train_addition.py --probe                  # 1 seed x 1000 步容量探针
-.venv/bin/python experiments/train_addition.py --probe --no-circular-embedding  # 循环编码消融
-.venv/bin/python experiments/train_addition.py --quick --embedding-mode frozen_circular  # 冻结模式冒烟
-.venv/bin/python experiments/embedding_ablation.py --quick              # 三模式聚合冒烟
-.venv/bin/python experiments/embedding_ablation.py                      # 三模式 x 5 seed 正式消融
-```
-
-### 1c. 复现 grokking 长训练扫描
-
-```bash
-.venv/bin/python experiments/grokking_scan.py --quick                    # 全链路冒烟
-.venv/bin/python experiments/grokking_scan.py --pilot-only               # 只跑 1-seed 超参 pilot（探索性）
-.venv/bin/python experiments/grokking_scan.py --pilot-from docs/grokking_pilot.json  # 复用 pilot，跑 5-seed 确认
-.venv/bin/python experiments/grokking_scan.py --redraw-from docs/grokking_metrics.json  # 只重画图
-```
-
-长训练默认 `workers=6`、经典臂 40000 步；本机内存紧张时把 `--workers` 调小，
-并显式设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
-
-### 1d. 复现「不加先验 = grokking」修正实验
-
-```bash
-.venv/bin/python experiments/grokking_no_prior.py --quick               # 冒烟
-.venv/bin/python experiments/grokking_no_prior.py --stage1-only --workers 6 --stage1-steps 12000
-.venv/bin/python experiments/grokking_no_prior.py --stage2-from docs/grokking_no_prior_pilot.json --workers 6 --stage2-steps 100000
-.venv/bin/python experiments/grokking_no_prior.py --redraw-from docs/grokking_no_prior.json
-```
-
-两架构共用同一套 `lr / wd / val_fraction / batch / 步数 / seed / 切分`，唯一差别是
-架构；二次 MLP 只作装置校验。`stage1` 是 1-seed 探索（60 条件 × 12000 步），
-结论只由 `stage2` 的 5-seed × $10^5$ 步给出。
-
-`--quick` 仅跑极小规模并将产物写入 `results/`，不会覆盖 `docs/` 下的正式归档。
-
-### 1e. 严格对照、装置标定与 L1 架构原型
-
-```bash
-# 严格对照（代码层断言两臂 13 项相同）；--annotate-from 给旧归档补装置有效性判据
-.venv/bin/python experiments/train_addition.py --matched --lr 0.003 --scale-init 5 \
-    --workers 4 --metrics-out docs/matched_v4_metrics.json --no-figure
-.venv/bin/python experiments/train_addition.py --annotate-from docs/matched_metrics.json
-
-# 装置诊断 + 汇总四版归档 + 中文结论图（不重跑训练）
-.venv/bin/python experiments/matched_calibration.py
-# 公开记录的最小调参网格：先跑便宜的经典臂定位可行域，再验证两臂
-.venv/bin/python experiments/matched_calibration.py --grid --arms classical --grid-workers 2
-.venv/bin/python experiments/matched_calibration.py --grid --arms both \
-    --scale-inits 1,5 --lrs 0.003 --grid-workers 2
-
-# 容量匹配 pilot（单进程，只测参数量 / 初始行为 / 单步成本）
-.venv/bin/python experiments/capacity_matched.py --layers 1,5,10,20
-```
-
-L1 原型只验证结构（P1–P4），**不做性能对比**：
-
-```python
-from qml_lab.recurrent import QuantumRecurrentLM
-m = QuantumRecurrentLM(vocab_size=31, n_qubits=4)
-logits = m(idx)                       # (B,T,V)，每步把上一步测量期望重上传
-out = m.generate(idx[:, :4], n_new=8)  # 逐 token 推进状态
-```
-
-契约测试 `python tests/smoke_test.py` 已包含 `check_recurrent_architecture()`。
-本机可用内存常在 8–9 GB / 31 GB，每个 worker 约 420 MB：**正式训练
-`workers=4`、标定/诊断 `workers=2`、容量 pilot 单进程，且不要同时叠加两个
-多进程任务**；统一设 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`。
-
-### 1f. L1 短预算 pilot：结构契约过关，但状态还没被证明用上
-
-> **这一步不是效果对照，也不比较量子与经典谁更好。** 方案第 10 节的第 3 步
-> （验证 P1–P4 与训练成本）已交付，归档
-> [`docs/recurrent_pilot.json`](docs/recurrent_pilot.json)、
-> 图 [`docs/figures/recurrent_pilot.png`](docs/figures/recurrent_pilot.png)。
-> 2 seed × 120 步、单进程；所有数字只作**装置标定与成本测量**，
-> 没有配对 CI、没有 Holm、没有「量子 vs 经典」优劣结论。
-
-按方案第 5 节换掉了「一次性答案分类」口径：训练与评估都用**标准下一 token
-预测**，语料为独立切分字符集（train 3171 / val 947 字符，V=29，
-**k=4 上下文覆盖率 0.3867**）；另加延迟回忆小任务
-（`[目标][pad×4][提示]` → 只在末位监督复现目标，随机基线 `1/4=0.25`）
-检验状态是否真的承载跨步信息。
-
-四臂是 **2×2 因子设计**，但比较轴只有一个：`feedback` 开/关。代码在
-`assert_ablation_matched()` 里硬断言 A0/A1（以及两经典臂）**初始权重逐元素
-相同**，只允许差 `feedback` 一个变量；经典臂只作任务与训练代码能否学动的
-**装置有效性正对照**。
-
-**统计范围（按统计 / 实验设计 / EDA 技能补齐）**：独立重复单位是 **seed
-（n=2）**，不是 batch、token 或序列；下表数字是 2 seed 均值的**示意值**，
-未报 SD / CI、不做显著性检验。字符语料评估固定同一批 4 个 val batch；
-延迟回忆是合成任务，只有 `k=4` 种输入序列，训练与评估的输入空间
-**完全重叠**，所以它的 `acc` 是拟合 / 记忆通路检查，**不是 held-out 泛化**；
-每 seed 32 个样本也不能当成 n=32 的独立重复（伪重复）。详见归档
-`reporting_scope` 字段。
-
-| 检查 | 量子·开 (A0) | 量子·关 (A1) | 经典·开 (正对照) | 经典·关 |
+| 任务与模型 | 参数量 | ID 指标 | OOD 长度外推指标 | 相对基线配对检验（Holm 校正） |
 | --- | --- | --- | --- | --- |
-| P1 改前缀后末位输出变化 | `1.12e-3` | **0** | `3.82e-2` | **0** |
-| P2 状态梯度范数 | `1.36e-2` | **0** | `4.92e-2` | **0** |
-| P3 未来信息泄漏 | 0 | 0 | 0 | 0 |
-| P4 逐步生成长度/前缀 | ✓ | ✓ | ✓ | ✓ |
-| 字符语料 val loss（均匀基线 `3.367`） | `2.6613` | `2.6712` | `2.5849` | `2.6029` |
-| 延迟回忆末位 acc（基线 `0.25`） | `0.297` | `0.297` | **`0.594`** | `0.297` |
+| **Periodic-4** ($P^* \propto \cos^2(\frac{\pi}{4}\sum x_t)$，训 $T\in\{4,6,8\}$) | | 精确 $\text{KL}_{\text{ID}}$ ($T=8$) / 禁态率 | 精确 $\text{KL}_{\text{OOD}}$ ($T=14$) / 禁态率 | |
+| `quantum_mps_complex_chi2`（复振幅 $\chi=2$） | **24** | **`0.0729 ± 0.1526`** / **`0.048`** | **`0.0949 ± 0.1521`** / **`0.057`** | —（4/5 seed 达 `KL_ID ≤ 0.0066`、`forb_T14 ≤ 0.010`） |
+| `classical_nonneg_mps_chi2`（同 $\chi=2$） | 12 | `0.3667 ± 0.0478` / `0.220` | `0.4527 ± 0.0739` / `0.255` | `Q − NonNeg(χ=2)` $\text{KL}_{\text{ID}} = -0.2938$ ($p_{\text{Holm}}=0.0192$ ✓) |
+| `classical_nonneg_mps_chi3`（**等 24 参**，更高 $\chi=3$） | **24** | `0.3066 ± 0.0489` / `0.195` | `0.3929 ± 0.0505` / `0.248` | `Q − NonNeg(χ=3)` $\text{KL}_{\text{OOD}} = -0.2981$ ($p_{\text{Holm}}=0.0247$ ✓) |
+| `classical_rnn_matched` | 35 | `0.4310 ± 0.0374` / `0.230` | `0.5144 ± 0.0854` / `0.249` | `Q − RNN` $\text{KL}_{\text{OOD}} = -0.4195$ ($p_{\text{Holm}}=0.00573$ ✓) |
+| **Dyck-1 括号平衡**（零重叠 $T=14 \to 16$；Bayes `0.4330 / 0.4541`） | | Test-ID NLL / 合法率 | OOD $T=16$ NLL / 合法率 | |
+| `quantum_mps_chi6`（有符号实振幅 $\chi=6$） | **84** | **`0.4415 ± 0.0070`** / **`0.939`** | **`0.4704 ± 0.0186`** / **`0.856`** | — |
+| `classical_nonneg_mps_chi6`（同 $\chi=6$、同参） | **84** | `0.4732 ± 0.0046` / `0.650` | `0.5036 ± 0.0030` / `0.592` | `Q − NonNeg` $\text{NLL}_{\text{ID}} = -0.0317$ ($p_{\text{Holm}}=0.000382$ ✓) |
+| `classical_rnn_matched` | 98 | `0.4741 ± 0.0158` / `0.718` | `0.5928 ± 0.0598` / `0.224` | `Q − RNN` 合法率 `+0.632` ($p_{\text{Holm}}=0.0144$ ✓) |
 
-**P1–P4 结构契约 4/4 通过**，且关反馈后前缀敏感度与跨步梯度严格归零 ——
-信息流与梯度路径确实经过量子线路。四臂 loss 都下降，训练装置没有塌。
+> **诚实边界**：1D MPS 精确收缩经典复杂度为 $O(TV\chi^3)$，因此本轨道验证的是**量子相消干涉带来的表征/压缩优势**（Perron-Frobenius 分离，且可编译为浅层序列量子电路），**不是**指数级量子硬件加速。
 
-**但功能有效性没有被证明**：延迟回忆上量子开/关都停在 `0.297`（≈基线），
-只有经典正对照到 `0.594`（反馈增益 `+0.297`），量子反馈增益为 `0`。
-「是否学会」的判据写在归档 `verdict.functional_state_use.criterion`：
-**末位 acc 需超过随机基线 `0.25 + 0.10`**（装置标定的显式阈值，不是统计显著检验；
-本 pilot 只有 2 seed，不做任何显著性判断）。
-这只能读作「本短预算下量子循环没学会用状态」，**不能**推出「量子循环不能
-记忆」（步数/容量/参数化都没扫），也**不能**推出「经典更好」（两臂预算、
-容量、参数化都未对齐）。结构上有资格 ≠ 状态被用上，这两层必须分开。
+### 3.2 轨道 2：真正 L2 相干量子态循环 / 幺正 SSM（`qml_lab/quantum_ssm.py`）
 
-成本（单进程，`OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`）：量子每步
-`T=4/8/16` = `0.086 / 0.194 / 0.388 s`，经典 `0.0042 / 0.0043 / 0.0081 s`；
-`T=8` 外推 2000 步约 **`0.11 h/seed`**。实测单进程峰值工作集 **约 333 MB**
-（`332.7 MB`，`--probe-memory` 在新进程复测 `334.8 MB`，差 2.1 MB 属基线波动；
-运行当时可用物理内存仅 2.58 GB / 31.2 GB，没有叠加其它训练任务）。
+`QuantumUnitarySSM` 维护跨步**不坍缩**的 3-qubit 相干隐态 $|\psi_t\rangle = U(x_t)|\psi_{t-1}\rangle \in \mathbb{C}^8$（由 1+2 体 Pauli 哈密顿量生成，$U(x_t) = e^{-iH(x_t)}$），仅通过完备 POVM（$\sum_c M_c = I_8$）做精确玻恩规则读出，**零经典 MLP 拐杖**，经 PennyLane `default.qubit` 逐元素校验（`max|Δψ|=1.21e-7`，`max|Δp|=2.38e-7`）：
 
-**机制诊断（解析，不是训练结论）**：L1 把状态以 `RZ` 相位重上传，读出却
-只有 `expval(Z)`；Z 基下局部相位不改变振幅模方，纠缠层权重为 0 时
-`|∂Z/∂s|` 近零（`2.29e-9`）。默认 `init_std=0.05` 下只有 `5.20e-3`，同轴
-`RY` 反馈是 `8.48e-1`（**约 163× 压制**）；只把读出换成 `expval(X)`，即使
-权重为 0 也能看见相位（`4.13e-2`）。见
-[`experiments/state_channel_probe.py`](experiments/state_channel_probe.py) 与
-[`docs/state_channel_probe.json`](docs/state_channel_probe.json)。这为
-「反馈增益 0」给出一个**可检验候选原因**：状态通路在初始化附近接近死通道，
-120 步短训练可能来不及打开。**但这是解析梯度、不是训练梯度**：既不能写成
-「量子循环不能记忆」，也不能写成「换读出就学得会」；「功能有效性未证明」
-这一结论不变。下一步应先做读出基 / 状态门的单变量 A/B 重训练来验证，
-而不是先盲目延长训练。
-
-**图怎么读**：(a) 对数轴下「开反馈」柱高、「关反馈」严格贴 0，是 P1/P2 的
-单变量证据；(b) 四条 loss 曲线全部下降、灰虚线是均匀基线，只说明装置没塌；
-(c) 只有经典正对照越过红色随机基线，是「功能有效性未证明」的关键面板；
-(d) 成本随序列长度上升，右下角是 2000 步外推。**四张图都不报差值显著性**。
-
-```bash
-# 正式短 pilot（单进程，写 docs/）；--quick 只跑冒烟并写 results/
-.venv/bin/python experiments/recurrent_pilot.py
-# 改结论口径 / 改图版式时不要重跑训练
-.venv/bin/python experiments/recurrent_pilot.py --recompute-from docs/recurrent_pilot.json
-.venv/bin/python experiments/recurrent_pilot.py --redraw-from docs/recurrent_pilot.json
-# 复测归档里的单进程峰值工作集（不训练、不写文件）
-.venv/bin/python experiments/recurrent_pilot.py --probe-memory
-```
-
-> 命令按 WSL / Linux 写；Windows 侧把 `.venv/bin/python` 换成
-> 工作区根的 `.venv/Scripts/python.exe`。重画可加 `--out <目录>` 隔离输出，
-> 避免误覆盖 `docs/figures/` 的正式图。
-
-**下一步（本轮未启动，需确认预算与内存）**：① 先做读出基（`Z` → 含
-`X/Y`）/ 状态门（`RZ` → `RY`）的**单变量 A/B 重训练**，验证上述机制假设；
-② 机制明确后再延长训练 / 扫 Q、线路深度、lr，仍以延迟回忆当装置有效性
-门槛；③ 通过之后才谈 A2/A3 同构对照（≥5 seed、配对 CI、Holm）与 L2
-隐量子态延续。在此之前不写下任何效果结论。契约测试新增
-`check_recurrent_pilot()` 与 `check_state_channel_probe()`。
-
-### 2. 复现受控基线（`train_llm.py`）与完整 5-Seed 诊断（`diagnose_llm.py`）
-
-```bash
-# 单组受控对照（支持 --context-mode token|causal 与 --observables）
-.venv/bin/python experiments/train_llm.py \
-    --qubits 4 --layers 1 --seq-len 16 --batch-size 8 --steps 200 --seed 0
-
-# 因果窗口 + 48维两体 Pauli 读出受控运行
-.venv/bin/python experiments/train_llm.py \
-    --context-mode causal --observables "z+x+y+zzall+xxall+yyall" \
-    --pre-scale --near-identity-init --scale 5.0 --head mlp --steps 300 --seed 0
-
-# 复现 README 与 docs/REVIEW.md 的全部 11 组 × 5 seeds 诊断实验
-.venv/bin/python experiments/diagnose_llm.py --steps 300 --seeds 0 1 2 3 4 --workers 12
-```
-
----
-
-## 参数速查（`experiments/train_llm.py`）
-
-| 参数 | 默认值 | 含义 |
+| 模型 | $S_3$ 群词问题（参 / ID $T=6$ / OOD $T=12$ / **OOD $T=16$**，随机 `0.167`） | 确定性延迟回忆（参 / ID `pad=4` / **OOD `pad=8`**，随机 `0.250`） |
 | --- | --- | --- |
-| `--qubits` | `4` | 量子比特数（瓶颈维度） |
-| `--layers` | `1` | `StronglyEntanglingLayers` 层数 |
-| `--context-mode` | `token` | `token`（逐字符 $k=1$）或 `causal`（因果卷积窗口） |
-| `--context-window` | `4` | `causal` 模式下的历史窗口长度 $k$ |
-| `--observables` | `z` | 可观测量规格（如 `z`, `z+x+y`, `z+x+y+zzall`, `z+x+y+zzall+xxall+yyall`） |
-| `--reupload` | `none` | 数据重上传模式：`none` / `fixed` / `trainable` |
-| `--pre-scale` | 关闭 | 是否启用 `tanh(h)*π/2` 入线角度防饱和缩放 |
-| `--scale` | `1.0` | 读出放大倍数（如 `5.0` 或 `learnable`） |
-| `--head` | `linear` | 分类头类型：`linear` 或 `mlp` |
-| `--seq-len` | `16` | 自回归序列窗口长度 |
-| `--batch-size` | `8` | 批大小 |
-| `--steps` | `200` | 训练步数 |
-| `--lr` | `0.01` | 学习率 |
-| `--seed` / `--seeds` | `0` | 单个或多个随机种子 |
-| `--quick` | 关闭 | 极小规模冒烟验证 |
+| **`l2_quantum_unitary_ssm`**（真正 L2，0 MLP） | `300` / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** | `344` / **`1.000 ± 0.000`** / **`1.000 ± 0.000`** |
+| `classical_orthogonal_ssm`（同维 $SO(9)$ 几何对照） | `270` / `1.000 ± 0.000` / `1.000 ± 0.000` / `1.000 ± 0.000` | `324` / `1.000 ± 0.000` / `0.950 ± 0.112` |
+| `classical_rnn`（无约束经典 RNN） | `327` / `0.595 ± 0.134` / `0.321 ± 0.153` / `0.270 ± 0.155` | `228` / `0.900 ± 0.137` / `0.500 ± 0.468` |
+| `l1_quantum_fixed_rzy`（修复后 L1 `RZ+Y`） | `278` / `0.390 ± 0.126` / `0.331 ± 0.070` / `0.291 ± 0.059` | `278` / `0.750 ± 0.306` / `0.550 ± 0.326` |
+| `l1_quantum_fixed_ryz`（修复后 L1 `RY+Z`） | — | `278` / `0.900 ± 0.137` / `0.700 ± 0.209` |
+| `l1_quantum_legacy_rzz`（旧版死通道 `RZ+Z`） | — | `278` / `0.500 ± 0.306` / `0.400 ± 0.137` |
+| `l0_causal_conv`（固定窗口 $k=4$） | `334` / `0.180 ± 0.018` / `0.176 ± 0.016` / `0.156 ± 0.018` | `348` / `0.250 ± 0.000` / `0.250 ± 0.000` |
+
+- **$S_3$ OOD $T=16$ 配对检验**：L2 显著击败 RNN（`+0.730`, $p_{\text{Holm}}=0.000912$）、L1（`+0.709`, $p_{\text{Holm}}=3.32\times10^{-5}$）与 L0（`+0.844`, $p_{\text{Holm}}=2.06\times10^{-7}$），并与经典 `OrthogonalSSM` 完全持平（$\Delta=0.000, p_{\text{Holm}}=1.0$）。
+- **物理归因与 FTQC 边界**：在 $d_H=8$ 尺度上，100% OOD 外推来自**保范群表示（幺正/正交相干演化 vs 有耗散 RNN / 测量坍缩 L1）**；将 `QuantumUnitarySSM` 扩展至指数级希尔伯特空间 $2^n$ 或实现基于 **QSVT / 块编码的量子自注意力**均需要容错量子计算（FTQC）与 QRAM，**无法**在当前经典状态向量模拟器上声称指数级加速。
 
 ---
 
-## 训练曲线与耗时对比
+## 四、目录结构与快速复现
 
-![各模式训练 Loss 曲线](docs/figures/lm_loss.png)
+- `qml_lab/`：`quantum.py`（规范 30-Pauli / 3 QWC 读出与旧版 opt-in）、`models.py`（`RichQuantumLM`, `ClassicalTrigBilinearLayer`, `parameter_breakdown`）、`recurrent.py`（L1 修复版）、`born_machine.py`（Regime III 轨道 1）、`quantum_ssm.py`（Regime III 轨道 2）、`arithmetic.py`、`data.py`、`corpus_independent.py`。
+- `experiments/`：`state_channel_probe.py`、`matched_task2.py`、`benchmark_quantum_native_seq.py`、`train_addition.py`、`grokking_no_prior.py`、`diagnose_llm.py`。
+- `tests/smoke_test.py`：15 项离线契约与回归测试（含 QWC 计数、因果严格性、POVM 完备性、PennyLane 校验与 CLI 冒烟）。
 
-困惑度收敛曲线与 5-seed 平均训练墙钟耗时见 [`docs/figures/lm_perplexity.png`](docs/figures/lm_perplexity.png) 与 [`docs/figures/lm_time.png`](docs/figures/lm_time.png)。
+```bash
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python -m pytest -v tests/smoke_test.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/state_channel_probe.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/matched_task2.py --workers 4
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/benchmark_quantum_native_seq.py --workers 4
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python experiments/train_addition.py --matched --lr 0.003 --scale-init 5 --workers 4 --no-figure
+```
 
----
-
-## 相关仓库与许可
-
-- 方法学审查报告：[`docs/REVIEW.md`](docs/REVIEW.md)
-- 姊妹仓库：[quantum-mnist](https://github.com/quantum-machine-learning-code/quantum-mnist) · 量子手写数字识别与读出瓶颈分析
-- 组织主页：[quantum-machine-learning-code](https://github.com/quantum-machine-learning-code)
-
-本项目采用 [MIT License](LICENSE)。
+*注：本机纯 CPU 复现建议固定 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` 且 `--workers <= 4`；各实验脚本均支持 `--quick` 秒级冒烟（产物写 `results/`，不覆盖 `docs/`）。*
