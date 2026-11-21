@@ -4,6 +4,15 @@ All notable changes to `quantum-llm` will be documented in this file.
 
 ## [Unreleased] - 2026-11-21
 
+### Added (Phase 3 — Quantum Self-Attention Benchmark & Formal IMRaD Reports)
+- **Quantum Self-Attention Three-Regime Prototype (`qml_lab/quantum_attention.py`, `experiments/benchmark_quantum_attention.py`, `docs/quantum_attention_metrics.json`)**:
+  - Zero-overlap Key-Value Associative Recall benchmark ($K=4, V=4$, 2 distractors, $T_{\text{train}}=6 \to T_{\text{OOD}}=10$, 5 seeds, strictly matched `924–946` params) across 6 arms: Regime I (`ClassicalDotAttention`, `ClassicalOverlapAttention`, `ClassicalLinearMixer`), Regime II (`QuantumSwapTestAttention` verified against real 5-qubit PennyLane `CSWAP` circuit to `7.77e-16` + finite-shot Bernoulli sampling $S \in \{100, 500, 2000\}$ exposing `MAE 0.0737..0.0164` and `5.5k..110k` full-causal shots), and Regime III (`QuantumQuixerAttention`: 3q $U(8)$ + 6q `PREPARE/SELECT/PREPARE†` LCU + exact degree-3 QSVT `PCPhase` + complete POVM $\sum M_c = I_8$, **946 quantum / 0 classical MLP params**, PennyLane-verified `<2.9e-7`, `0.9910 ± 0.0074` ID & `0.9910 ± 0.0124` OOD, $p_{\text{succ}}=0.423 / 0.395$, plus uniform-LCU ablation `0.8300` OOD).
+  - Generated 5 publication-quality 300-dpi figures: `docs/figures/quantum_attention_accuracy.png`, `docs/figures/quantum_attention_shots_and_lcu.png`, plus `experiments/plot_report_figures.py` generating `matched_task2_comparison.png`, `state_channel_probe_bloch.png`, and `quantum_native_seq_summary.png`.
+  - Extended `tests/smoke_test.py` to **16 offline contract & regression tests** (`test_quantum_attention`).
+- **4 Standalone Formal IMRaD Experimental Reports (`docs/reports/`)**:
+  - [`01_regime2_l0_vqc_confound_report.md`](docs/reports/01_regime2_l0_vqc_confound_report.md), [`02_l1_bloch_channel_probe_report.md`](docs/reports/02_l1_bloch_channel_probe_report.md), [`03_regime3_born_and_unitary_ssm_report.md`](docs/reports/03_regime3_born_and_unitary_ssm_report.md), [`04_quantum_attention_benchmark_report.md`](docs/reports/04_quantum_attention_benchmark_report.md) — each with formal hypotheses, circuit/Hilbert-space derivations, verbatim JSON metrics, embedded PNG figures, QML reproducibility checklists, and verified citations.
+- Updated synced ZH/EN [`README.md`](README.md) & [`README_EN.md`](README_EN.md) (102 lines each) with Quantum Self-Attention headline results and formal report index.
+
 ### Fixed (P0 Audit Fixes & Confound Resolution)
 - **`qml_lab/recurrent.py`**:
   - Fixed `detach_state=True` bug that detached `next_state` before computing `self.head(...)` logits (cutting off head gradients on the current step) in both `QuantumRecurrentLM` and `ClassicalRecurrentLM`.
