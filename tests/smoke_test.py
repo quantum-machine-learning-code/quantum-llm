@@ -893,6 +893,69 @@ def check_quantum_native_models() -> None:
     assert rec["id"][0].shape == (4, 6) and rec["ood"][0].shape == (4, 10)
 
 
+def check_quantum_attention() -> None:
+    """验证量子自注意力三范式契约：SWAP-Test (<1e-10), Quixer LCU+QSVT (<1e-6), POVM, --quick CLI。"""
+    from qml_lab.quantum_attention import (
+        ClassicalOverlapAttention,
+        QuantumQuixerAttention,
+        QuantumSwapTestAttention,
+        attention_parameter_breakdown,
+        build_kv_recall_dataset,
+    )
+
+    set_seed(0)
+    ds = build_kv_recall_dataset(n_train=60, n_val=20, n_test_id=20, n_test_ood=20, seed=0)
+    x_id, y_id = ds["test_id"]
+    assert x_id.shape == (20, 6) and ds["test_ood"][0].shape == (20, 10)
+
+    # 1. QuantumSwapTestAttention: exact parity with PennyLane CSWAP (<1e-10) & ClassicalOverlapAttention
+    sw = QuantumSwapTestAttention(vocab_size=ds["vocab_size"], n_classes=ds["n_classes"])
+    ov = ClassicalOverlapAttention(vocab_size=ds["vocab_size"], n_classes=ds["n_classes"])
+    ov.load_state_dict(sw.state_dict())
+    with torch.no_grad():
+        max_surr_diff = float((sw(x_id[:8]) - ov(x_id[:8])).abs().max().item())
+        assert max_surr_diff < 1e-6, f"SWAP-Test 与 ClassicalOverlapAttention 应解析等价，diff={max_surr_diff}"
+    pl_sw = sw.verify_against_pennylane(x_id[0])
+    assert pl_sw["max_abs_overlap_diff"] < 1e-10, f"SWAP-Test 与 PennyLane CSWAP 偏差过大: {pl_sw}"
+    logits_fs, fs_stats = sw.forward_finite_shots(x_id[:4], shots=200)
+    assert logits_fs.shape == (4, 4) and fs_stats["shots_last_token_query"] == 5 * 200
+    assert fs_stats["shots_full_causal_matrix"] == 21 * 200
+
+    # 2. QuantumQuixerAttention: exact parity with PennyLane PREPARE/SELECT/PREPARE†+PCPhase (<1e-6),
+    #    POVM completeness sum M_c = I_8, zero classical MLP params
+    qx = QuantumQuixerAttention(vocab_size=ds["vocab_size"], n_classes=ds["n_classes"], n_qubits=3, povm_rank=2)
+    pb = attention_parameter_breakdown(qx)
+    assert pb["classical_params"] == 0 and pb["quantum_params"] == pb["total"] > 0, f"Quixer 应零经典参数: {pb}"
+    with torch.no_grad():
+        M_sum = qx.povm_effects().sum(dim=0)
+        assert torch.allclose(M_sum, torch.eye(8, dtype=M_sum.dtype), atol=1e-5), "Quixer POVM 完备性失败"
+        logp, probs, p_succ = qx.forward_with_stats(x_id[:4])
+        assert probs.shape == (4, 4)
+        assert torch.allclose(probs.sum(dim=-1), torch.ones(4), atol=1e-5)
+        assert bool((p_succ > 0).all() and (p_succ <= 1.0 + 1e-5).all())
+    pl_qx = qx.verify_against_pennylane(x_id[0])
+    assert pl_qx["max_abs_unnorm_state_diff"] < 1e-6, f"Quixer 态矢量与 PennyLane 不一致: {pl_qx}"
+    assert pl_qx["max_abs_prob_diff"] < 1e-6, f"Quixer POVM 概率与 PennyLane 不一致: {pl_qx}"
+    loss_qx = torch.nn.functional.nll_loss(qx(x_id[:4]), y_id[:4])
+    loss_qx.backward()
+    assert qx.theta.grad is not None and float(qx.theta.grad.abs().sum()) > 0.0
+    assert qx.qsvt_phases.grad is not None and float(qx.qsvt_phases.grad.abs().sum()) > 0.0
+
+    # 3. benchmark_quantum_attention.py --quick CLI isolation test
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_json = Path(tmpdir) / "qa_quick.json"
+        cmd = [
+            sys.executable,
+            str(ROOT / "experiments" / "benchmark_quantum_attention.py"),
+            "--quick",
+            "--out",
+            str(out_json),
+        ]
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, f"benchmark_quantum_attention.py --quick 失败:\n{proc.stderr}\n{proc.stdout}"
+        assert out_json.exists()
+
+
 def check_quick_cli() -> None:
     """验证 train_llm.py --quick 可正常跑通且不污染默认 results/。"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -922,6 +985,7 @@ test_recurrent_architecture = check_recurrent_architecture
 test_recurrent_pilot = check_recurrent_pilot
 test_state_channel_probe = check_state_channel_probe
 test_quantum_native_models = check_quantum_native_models
+test_quantum_attention = check_quantum_attention
 test_quick_cli = check_quick_cli
 
 
@@ -939,6 +1003,7 @@ def main() -> None:
     check_recurrent_pilot()
     check_state_channel_probe()
     check_quantum_native_models()
+    check_quantum_attention()
     check_lm()
     check_quick_cli()
     print("SMOKE OK")
