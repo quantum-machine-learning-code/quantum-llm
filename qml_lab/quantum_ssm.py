@@ -245,12 +245,12 @@ class ClassicalOrthogonalSSM(nn.Module):
 
     def forward_probs(self, x: torch.Tensor) -> torch.Tensor:
         B, T = x.shape
-        O = self.token_orthogonals()
-        h = torch.zeros(B, self.state_dim, dtype=O.dtype, device=x.device)
+        orth = self.token_orthogonals()
+        h = torch.zeros(B, self.state_dim, dtype=orth.dtype, device=x.device)
         h[:, 0] = 1.0
         states = []
         for t in range(T):
-            h = torch.einsum("bij,bj->bi", O[x[:, t]], h)
+            h = torch.einsum("bij,bj->bi", orth[x[:, t]], h)
             states.append(h)
         S_all = torch.stack(states, dim=1)  # (B, T, d)
         E = self.readout_ops()  # (C, r, d)

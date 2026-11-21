@@ -883,9 +883,9 @@ def check_quantum_native_models() -> None:
     # ClassicalOrthogonalSSM 严格正交性与概率和为 1
     ossm = ClassicalOrthogonalSSM(vocab_size=3, n_classes=6, state_dim=9, readout_rank=2)
     with torch.no_grad():
-        O = ossm.token_orthogonals()
+        orth = ossm.token_orthogonals()
         eye9 = torch.eye(9).unsqueeze(0).expand(3, -1, -1)
-        assert torch.allclose(O.transpose(-1, -2) @ O, eye9, atol=1e-5)
+        assert torch.allclose(orth.transpose(-1, -2) @ orth, eye9, atol=1e-5)
         assert torch.allclose(ossm.forward_probs(x_sample).sum(dim=-1), torch.ones(4, 6), atol=1e-4)
 
     # 确定性延迟回忆契约：精确 4 条序列

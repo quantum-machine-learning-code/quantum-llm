@@ -28,7 +28,7 @@
 
 ### 1.1 课题二（独立字符语料，规范 30-Pauli / 3 QWC 读出）
 
-历史 `independent_corpus.py` / `robustness_check.py` 存在未察觉混杂：量子臂固定 `scale=5.0, near_identity_init=True`，经典臂 `scale=1.0, near_identity_init=False`，且缺少三角特征经典替身。`experiments/matched_task2.py` 将 13 项配置逐项断言一致（统一可学习 `out_scale` 初值 `1.0`、默认初始化、`steps=400, lr=0.01, seeds=0..4`），并与与 `quantum-mnist` 对齐的规范 30-Pauli 读出（`z+x+y+zzall+xxall+yyall`，**3 个 QWC 对易组**，旧版 48-Pauli 为 10 组）及 12 参 `ClassicalTrigBilinearLayer` 严格对照（[`docs/matched_task2_metrics.json`](docs/matched_task2_metrics.json)）：
+历史 `independent_corpus.py` / `robustness_check.py` 存在未察觉混杂：量子臂固定 `scale=5.0, near_identity_init=True`，经典臂 `scale=1.0, near_identity_init=False`，且缺少三角特征经典替身。`experiments/matched_task2.py` 将 13 项配置逐项断言一致（统一可学习 `out_scale` 初值 `1.0`、默认初始化、`steps=400, lr=0.01, seeds=0..4`），并与 `quantum-mnist` 对齐的规范 30-Pauli 读出（`z+x+y+zzall+xxall+yyall`，**3 个 QWC 对易组**，旧版 48-Pauli 为 10 组）及 12 参 `ClassicalTrigBilinearLayer` 严格对照（[`docs/matched_task2_metrics.json`](docs/matched_task2_metrics.json)）：
 
 | 臂 | 总参 (量子 / 经典变换) | QWC 组 | 初始读出 std | Train Loss | 独立 Val Loss | 泛化间隙 (Val−Train) | 最终 scale | 耗时 / seed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -169,7 +169,7 @@ class _RecurrentBase(nn.Module):
 class QuantumRecurrentLM(_RecurrentBase):
     """L1：测量反馈型量子循环语言模型（状态为经典测量期望，非 L2 持久量子态）。
 
-    默认 ``state_feedback="rz", readout_basis="y", init_std=0.5`` 修复了旧版
+    默认 ``state_feedback="rz", readout_basis="y", init_std=1.0`` 修复了旧版
     ``rz + z + init_std=0.05`` 状态通道在初始化附近被压制 ~163× 的结构缺陷。
     """
 

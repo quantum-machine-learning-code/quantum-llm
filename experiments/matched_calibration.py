@@ -218,8 +218,8 @@ def run_grid(scale_inits: list[float], lrs: list[float], steps: int,
     for scale_init, lr in combos:
         per_arm = {}
         for g in arms:
-            vals = [r["final"]["val_accuracy"] for (sc, l, gg, s), r
-                    in zip(meta, runs) if sc == scale_init and l == lr and gg == g]
+            vals = [r["final"]["val_accuracy"] for (sc, lr_v, gg, s), r
+                    in zip(meta, runs) if sc == scale_init and lr_v == lr and gg == g]
             per_arm[g] = {
                 "val_mean": float(np.mean(vals)), "val_std": float(np.std(vals, ddof=1)),
                 "per_seed": vals,
