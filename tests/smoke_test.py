@@ -42,8 +42,8 @@ from qml_lab.arithmetic import (
     split_table,
 )
 from qml_lab.corpus_independent import assert_disjoint, word_bigram_novelty
-from qml_lab.models import RichQuantumLM, TinyLM
-from qml_lab.quantum import make_rich_layer, make_vqc_layer, n_readout
+from qml_lab.models import ClassicalTrigBilinearLayer, RichQuantumLM, TinyLM, parameter_breakdown
+from qml_lab.quantum import count_qwc_groups, make_rich_layer, make_vqc_layer, n_readout
 from qml_lab.train import evaluate_lm, greedy_sample, train_lm
 from qml_lab.utils import set_seed
 
@@ -86,26 +86,62 @@ def check_data_and_entropy() -> None:
 
 
 def check_rich_quantum_layers() -> None:
-    """检查 4-qubit 48 维两体 Pauli 读出与可训练数据重上传层的形状及梯度。"""
+    """检查规范对称多观测量读出（3 QWC 组）、legacy_rich48（10 QWC 组）、经典近恒等尺度与公平三角替身。"""
     assert n_readout(4, "z") == 4
     assert n_readout(4, "z+x+y") == 12
-    assert n_readout(4, "z+x+y+zzall") == 24
-    assert n_readout(4, "z+x+y+zzall+xxall+yyall") == 48
+    assert n_readout(4, "z+x+y+zzall") == 18
+    assert n_readout(4, "z+x+y+zzall+xxall+yyall") == 30
+    assert count_qwc_groups(4, "z+x+y+zzall+xxall+yyall") == 3, "规范对称两体读出应恰为 3 个 QWC 组"
+    assert n_readout(4, "legacy_rich24") == 24
+    assert n_readout(4, "legacy_rich48") == 48
+    assert count_qwc_groups(4, "legacy_rich48") == 10, "legacy_rich48 跨基读出应为 10 个 QWC 组"
 
     set_seed(0)
-    layer48 = make_rich_layer(
+    layer30 = make_rich_layer(
         n_qubits=4,
         n_layers=1,
         observables="z+x+y+zzall+xxall+yyall",
         near_identity_init=True,
     )
     x = torch.randn(3, 4, dtype=torch.float32, requires_grad=True)
-    out = layer48(x)
-    assert tuple(out.shape) == (3, 48), f"48维读出形状错误: {tuple(out.shape)}"
+    out = layer30(x)
+    assert tuple(out.shape) == (3, 30), f"规范 30 维读出形状错误: {tuple(out.shape)}"
     assert bool(torch.isfinite(out).all())
     out.sum().backward()
     assert x.grad is not None and bool(torch.isfinite(x.grad).all())
-    assert layer48.weights.grad is not None and float(layer48.weights.grad.abs().sum()) > 0.0
+    assert layer30.weights.grad is not None and float(layer30.weights.grad.abs().sum()) > 0.0
+
+    # 验证修复后的 near_identity_init=True：量子臂与经典臂初始输出 std 量级对齐（不再差 16 倍）
+    set_seed(0)
+    mq = RichQuantumLM(
+        vocab_size=29, n_qubits=4, n_layers=1, transform_type="quantum",
+        context_mode="causal", observables="z+x+y+zzall+xxall+yyall",
+        pre_scale=True, near_identity_init=True, scale=1.0, head="mlp", hidden=48,
+    ).eval()
+    set_seed(0)
+    mc = RichQuantumLM(
+        vocab_size=29, n_qubits=4, n_layers=1, transform_type="classical",
+        context_mode="causal", observables="z+x+y+zzall+xxall+yyall",
+        pre_scale=True, near_identity_init=True, scale=1.0, head="mlp", hidden=48,
+    ).eval()
+    set_seed(0)
+    mt = RichQuantumLM(
+        vocab_size=29, n_qubits=4, n_layers=1, transform_type="classical_trig",
+        context_mode="causal", observables="z+x+y+zzall+xxall+yyall",
+        pre_scale=True, near_identity_init=True, scale=1.0, head="mlp", hidden=48,
+    ).eval()
+    idx_probe = torch.randint(0, 29, (8, 8))
+    with torch.no_grad():
+        sq = float(mq.bottleneck_features(idx_probe).std())
+        sc = float(mc.bottleneck_features(idx_probe).std())
+        st = float(mt.bottleneck_features(idx_probe).std())
+    assert 0.4 <= sq / max(sc, 1e-8) <= 2.5, f"near_identity_init 初始尺度失衡: Q={sq:.4f} vs C={sc:.4f}"
+    assert 0.4 <= sq / max(st, 1e-8) <= 2.5, f"ClassicalTrigBilinearLayer 初始尺度失衡: Q={sq:.4f} vs T={st:.4f}"
+    # ClassicalTrigBilinearLayer matched 模式应精确匹配 12 个可训练参数
+    trig_layer = ClassicalTrigBilinearLayer(4, 30, param_mode="matched")
+    assert sum(p.numel() for p in trig_layer.parameters()) == 12
+    assert parameter_breakdown(mq)["transform_quantum"] == 12
+    assert parameter_breakdown(mt)["transform_classical"] == 12
 
     # 可训练数据重上传层
     set_seed(1)
@@ -350,6 +386,18 @@ def check_arithmetic_task() -> None:
         assert abs(float(e[28, 0]) - 1.0) < 1e-6
         assert float(e[112, 4]) == 1.0
         assert tuple(answer_logits(model, x[:8]).shape) == (8, MODULUS)
+        # 验证优化后的 answer_logits 与全序列 forward()[:, -1, :112] 逐位等价，且只对末位调用 transform（省 75% 计算）
+        model.eval()
+        seen_batches = []
+        hook = model.transform.register_forward_hook(lambda _m, inp, _out: seen_batches.append(int(inp[0].shape[0])))
+        try:
+            with torch.no_grad():
+                fast_lg = answer_logits(model, x[:8])
+                full_lg = model(x[:8])[:, -1, :MODULUS]
+        finally:
+            hook.remove()
+        assert torch.allclose(fast_lg, full_lg, atol=1e-5), "answer_logits 优化路径与完整前向不一致"
+        assert seen_batches == [8, 32], f"answer_logits 应只送 B=8 而非 4*B=32 进入 transform，实测 {seen_batches}"
         ev = evaluate_answers(model, x[:8], y[:8])
         assert 0.0 <= ev["answer_accuracy"] <= 1.0
         assert np.isfinite(ev["answer_loss"])
@@ -601,19 +649,57 @@ def check_recurrent_architecture() -> None:
             assert model.weights.grad is not None, "量子线路权重必须收到跨步梯度"
             assert model.input_proj.weight.grad is not None
 
-        # P4 逐步生成：前缀保持不变、长度正确
+        # P4 逐步生成：前缀保持不变、长度正确，且 greedy 首 token 与 forward(prefix)[:, -1] 100% 逐位一致
         prefix = idx[:, :2]
-        gen = model.generate(prefix, n_new=3)
+        gen = model.generate(prefix, n_new=3, greedy=True)
         assert gen.shape == (B, 5) and torch.equal(gen[:, :2], prefix)
+        with torch.no_grad():
+            rand_pref = torch.randint(0, V, (16, 4))
+            fwd_first = model(rand_pref)[:, -1, :].argmax(dim=-1)
+            gen_first = model.generate(rand_pref, n_new=1, greedy=True)[:, -1]
+        assert torch.equal(fwd_first, gen_first), (
+            f"{cls.__name__}.generate() 首生成 token 与 forward()[:, -1] 不一致（重复喂入 prefix[-1] bug）"
+        )
+        # 温度采样分支（greedy=False）应能产生非恒定随机样本
+        g_samp = torch.Generator().manual_seed(123)
+        s_a = model.generate(rand_pref[:4], n_new=4, temperature=2.0, greedy=False, generator=g_samp)
+        s_b = model.generate(rand_pref[:4], n_new=4, temperature=2.0, greedy=False, generator=g_samp)
+        assert s_a.shape == (4, 8) and not torch.equal(s_a[:, 4:], s_b[:, 4:]), (
+            f"{cls.__name__}.generate(greedy=False) 未执行真正的温度多项采样"
+        )
 
-    # 状态消融：同权重下 feedback=False 应改变输出（模型确实有状态通路）
-    set_seed(0)
-    m_on = QuantumRecurrentLM(V, n_qubits=Q).eval()
-    m_off = QuantumRecurrentLM(V, n_qubits=Q, feedback=False).eval()
-    with torch.no_grad():
-        m_off.load_state_dict(m_on.state_dict())
-        d = (m_on(idx) - m_off(idx)).abs().mean()
-    assert d > 1e-3, f"feedback 消融应改变输出，实测 {d:.6f}"
+        # 回归测试 detach_state=True：截断 BPTT 不能切断当前步 t 对 embed / weights / cell 的梯度！
+        set_seed(0)
+        m_det = (
+            cls(V, n_qubits=Q, detach_state=True)
+            if cls is QuantumRecurrentLM
+            else cls(V, state_dim=Q, detach_state=True)
+        )
+        m_det.train()
+        logits_det = m_det(idx)
+        loss_det = torch.nn.functional.cross_entropy(
+            logits_det[:, :-1].reshape(-1, V), idx[:, 1:].reshape(-1)
+        )
+        loss_det.backward()
+        assert m_det.embed.weight.grad is not None and float(m_det.embed.weight.grad.abs().sum()) > 0.0, (
+            f"{cls.__name__}(detach_state=True) 切断了当前步 embed 梯度"
+        )
+        if cls is QuantumRecurrentLM:
+            assert m_det.weights.grad is not None and float(m_det.weights.grad.abs().sum()) > 0.0, (
+                "QuantumRecurrentLM(detach_state=True) 切断了当前步量子线路权重梯度"
+            )
+        else:
+            assert m_det.cell.weight_ih.grad is not None and float(m_det.cell.weight_ih.grad.abs().sum()) > 0.0
+
+    # 状态消融：同权重下 feedback=False 应改变输出（含 RZ+Y、RY+Z、XYZ 读出模式）
+    for fb, rb in (("rz", "y"), ("ry", "z"), ("rz", "xyz")):
+        set_seed(0)
+        m_on = QuantumRecurrentLM(V, n_qubits=Q, state_feedback=fb, readout_basis=rb).eval()
+        m_off = QuantumRecurrentLM(V, n_qubits=Q, state_feedback=fb, readout_basis=rb, feedback=False).eval()
+        with torch.no_grad():
+            m_off.load_state_dict(m_on.state_dict())
+            d = (m_on(idx) - m_off(idx)).abs().mean()
+        assert d > 1e-3, f"feedback 消融 ({fb}+{rb}) 应改变输出，实测 {d:.6f}"
 
 
 def check_recurrent_pilot() -> None:
@@ -689,28 +775,122 @@ def check_recurrent_pilot() -> None:
 
 
 def check_state_channel_probe() -> None:
-    """L1 状态通道解析诊断的契约：Z 读出下 RZ 相位在恒等线路里不可观测。
-
-    只测结构性质，不训练、不写归档；防止以后改电路时悄悄改变这条解释。
-    """
+    """L1 状态通道解析诊断的契约：验证 s=0,w=0 下 RZ+Z 与 RZ+X 导数皆为 0 而 RZ+Y 非零。"""
     from experiments.state_channel_probe import run_probe
 
     report = run_probe(n_inputs=4)
-    rows = {row["init_std"]: row for row in report["measurements"]}
-    zero = rows[0.0]["configs"]
-    assert zero["RZ_feedback_Z_readout"]["mean_abs_grad"] < 1e-6, (
-        "权重为 0 时 RZ 相位应无法被 Z 读出观测（解析预期）"
+    rows_rand = {row["init_std"]: row for row in report["measurements"]}
+    rows_zero = {row["init_std"]: row for row in report["measurements_at_init_zero"]}
+
+    # 真实初态 s=0, w=0：RZ+Z 与 RZ+X 皆为 0，唯有共轭基 RZ+Y 与同轴 RY+Z 非零
+    z0 = rows_zero[0.0]["configs"]
+    assert z0["RZ_feedback_Z_readout"]["mean_abs_grad"] < 1e-6
+    assert z0["RZ_feedback_X_readout"]["mean_abs_grad"] < 1e-6, (
+        "s=0, w=0 时 d(cos s)/ds = 0，RZ+X 应无一阶导数"
     )
-    assert zero["RZ_feedback_X_readout"]["mean_abs_grad"] > 1e-3, (
-        "换到 X 读出后相位应可见，否则诊断本身失效"
+    assert z0["RZ_feedback_Y_readout"]["mean_abs_grad"] > 1e-2, (
+        "共轭基 RZ+Y 在 s=0, w=0 时应有 O(1) 一阶敏感度"
     )
-    default = rows[0.05]["configs"]
-    assert (default["RZ_feedback_Z_readout"]["mean_abs_grad"]
-            < 0.05 * default["RY_feedback_Z_readout"]["mean_abs_grad"]), (
-        "默认初始化下 RZ+Z 应显著弱于 RY+Z，否则『状态通路被压制』的解释失效"
+    assert z0["RY_feedback_Z_readout"]["mean_abs_grad"] > 1e-1
+
+    # s~N(0,0.1), w=0.05：RZ+Y > RZ+X > RZ+Z，且 RZ+Z 远弱于 RY+Z
+    default = rows_rand[0.05]["configs"]
+    assert default["RZ_feedback_Y_readout"]["mean_abs_grad"] > default["RZ_feedback_X_readout"]["mean_abs_grad"]
+    assert default["RZ_feedback_X_readout"]["mean_abs_grad"] > default["RZ_feedback_Z_readout"]["mean_abs_grad"]
+    assert (
+        default["RZ_feedback_Z_readout"]["mean_abs_grad"]
+        < 0.05 * default["RY_feedback_Z_readout"]["mean_abs_grad"]
     )
     forbidden = " ".join(report["claims_forbidden"])
-    assert "量子循环不能记忆" in forbidden and "换读出基就能" in forbidden
+    assert "量子循环不能记忆" in forbidden
+
+
+def check_quantum_native_models() -> None:
+    """Regime III 契约：验证 MPS Born Machine 精确归一化与 True L2 Unitary SSM 酉演化 + PennyLane 等价性。"""
+    from itertools import product
+
+    from qml_lab.born_machine import (
+        ClassicalCausalRNNLM,
+        ClassicalNonNegMPS,
+        QuantumMPSBornMachine,
+        generate_dyck1_dataset,
+        generate_periodic_interference_dataset,
+    )
+    from qml_lab.quantum_ssm import (
+        ClassicalOrthogonalSSM,
+        QuantumUnitarySSM,
+        build_deterministic_delayed_recall,
+        build_s3_dataset,
+    )
+
+    # 1. Track 1: QuantumMPSBornMachine & ClassicalNonNegMPS 精确概率归一化 sum_x P(x) == 1
+    T_check = 5
+    all_x = torch.tensor(list(product((0, 1), repeat=T_check)), dtype=torch.long)
+    set_seed(0)
+    q_mps = QuantumMPSBornMachine(vocab_size=2, bond_dim=3, complex_amplitudes=False)
+    set_seed(0)
+    c_mps = ClassicalNonNegMPS(vocab_size=2, bond_dim=3)
+    assert sum(p.numel() for p in q_mps.parameters()) == sum(p.numel() for p in c_mps.parameters())
+    for m in (q_mps, c_mps):
+        with torch.no_grad():
+            probs = torch.exp(m.log_prob(all_x))
+            assert abs(float(probs.sum().item()) - 1.0) < 1e-4, f"{type(m).__name__} 概率未归一化: {probs.sum()}"
+            # 确认采样输出形状与词表合法
+            samp = m.sample(8, T_check)
+            assert samp.shape == (8, T_check) and int(samp.min()) >= 0 and int(samp.max()) <= 1
+        # 确认梯度正常回传
+        loss = m.nll_loss(all_x[:8])
+        loss.backward()
+        assert m.A_real.grad is not None and float(m.A_real.grad.abs().sum()) > 0.0
+
+    # 验证 complex_amplitudes=True 同样精确归一化
+    q_mps_c = QuantumMPSBornMachine(vocab_size=2, bond_dim=2, complex_amplitudes=True)
+    with torch.no_grad():
+        assert abs(float(torch.exp(q_mps_c.log_prob(all_x)).sum().item()) - 1.0) < 1e-4
+
+    # 验证数据集零重叠与 ClassicalCausalRNNLM 归一化
+    dyck = generate_dyck1_dataset(train_len=10, ood_len=12, seed=0)
+    assert dyck["train"].shape[1] == 10 and dyck["test_ood"].shape[1] == 12
+    per = generate_periodic_interference_dataset(modulus=4, train_len=6, ood_lens=(8,), n_train=32, n_val=16, n_test=16)
+    assert per["train"].shape == (32, 6)
+    rnn = ClassicalCausalRNNLM(vocab_size=2, embed_dim=2, hidden_dim=3)
+    with torch.no_grad():
+        assert abs(float(torch.exp(rnn.log_prob(all_x)).sum().item()) - 1.0) < 1e-4
+
+    # 2. Track 2: True L2 QuantumUnitarySSM 严格酉性、精确 POVM 完备性、零中间塌缩与 PennyLane 等价性
+    set_seed(0)
+    qssm = QuantumUnitarySSM(vocab_size=3, n_classes=6, n_qubits=3, povm_rank=2)
+    with torch.no_grad():
+        U = qssm.token_unitaries()
+        eye8 = torch.eye(8, dtype=U.dtype).unsqueeze(0).expand(3, -1, -1)
+        assert torch.allclose(U.conj().transpose(-1, -2) @ U, eye8, atol=1e-5), "token_unitaries 未严格酉"
+        E = qssm.povm_kraus()
+        M_sum = torch.einsum("cri,crj->ij", E.conj(), E)
+        assert torch.allclose(M_sum, torch.eye(8, dtype=M_sum.dtype), atol=1e-4), "POVM 不满足 sum M_c = I"
+
+    s3 = build_s3_dataset(train_len=6, ood_lens=(10,), n_train=60, n_val=20, n_test_id=20, n_test_ood=20, seed=0)
+    x_sample, y_sample = s3["train"][0][:4], s3["train"][1][:4]
+    probs = qssm.forward_probs(x_sample)
+    assert probs.shape == (4, 6, 6)
+    assert torch.allclose(probs.sum(dim=-1), torch.ones(4, 6), atol=1e-4), "POVM Born 概率之和必须为 1"
+    pl_chk = qssm.verify_against_pennylane(x_sample[0])
+    assert pl_chk["max_abs_state_diff"] < 1e-5, f"与 PennyLane 态矢量不一致: {pl_chk}"
+    assert pl_chk["max_abs_prob_diff"] < 1e-5, f"与 PennyLane POVM 概率不一致: {pl_chk}"
+    loss_q = torch.nn.functional.nll_loss(qssm(x_sample).reshape(-1, 6), y_sample.reshape(-1))
+    loss_q.backward()
+    assert qssm.theta.grad is not None and float(qssm.theta.grad.abs().sum()) > 0.0
+
+    # ClassicalOrthogonalSSM 严格正交性与概率和为 1
+    ossm = ClassicalOrthogonalSSM(vocab_size=3, n_classes=6, state_dim=9, readout_rank=2)
+    with torch.no_grad():
+        O = ossm.token_orthogonals()
+        eye9 = torch.eye(9).unsqueeze(0).expand(3, -1, -1)
+        assert torch.allclose(O.transpose(-1, -2) @ O, eye9, atol=1e-5)
+        assert torch.allclose(ossm.forward_probs(x_sample).sum(dim=-1), torch.ones(4, 6), atol=1e-4)
+
+    # 确定性延迟回忆契约：精确 4 条序列
+    rec = build_deterministic_delayed_recall(k=4, pad_len=4, ood_pad_len=8)
+    assert rec["id"][0].shape == (4, 6) and rec["ood"][0].shape == (4, 10)
 
 
 def check_quick_cli() -> None:
@@ -741,6 +921,7 @@ test_grokking_no_prior = check_grokking_no_prior
 test_recurrent_architecture = check_recurrent_architecture
 test_recurrent_pilot = check_recurrent_pilot
 test_state_channel_probe = check_state_channel_probe
+test_quantum_native_models = check_quantum_native_models
 test_quick_cli = check_quick_cli
 
 
@@ -757,6 +938,7 @@ def main() -> None:
     check_recurrent_architecture()
     check_recurrent_pilot()
     check_state_channel_probe()
+    check_quantum_native_models()
     check_lm()
     check_quick_cli()
     print("SMOKE OK")
