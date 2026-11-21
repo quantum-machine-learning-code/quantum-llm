@@ -14,9 +14,131 @@ except ImportError:
 
 __all__ = [
     "CausalContextEncoder",
+    "ClassicalTrigBilinearLayer",
     "TinyLM",
     "RichQuantumLM",
+    "parameter_breakdown",
 ]
+
+
+class ClassicalTrigBilinearLayer(nn.Module):
+    """公平的经典函数类替身：显式构造 1-body/2-body 三角乘积特征，匹配单次 RY 角度编码 PQC。
+
+    对 ``Q`` 维瓶颈输入 ``h`` 计算 ``u = in_scale * h + in_shift``，展开为全部
+    ``2Q + 4*Q*(Q-1)/2`` 个度-1 三角单项式
+    ``[cos u_i, sin u_i, cos u_i cos u_j, sin u_i sin u_j, cos u_i sin u_j, sin u_i cos u_j]``，
+    再通过固定正交投影（或可学习线性投影）输出 ``out_features`` 维特征。
+
+    * ``param_mode="matched"``（默认）：仅训练 ``in_scale`` (Q) + ``in_shift`` (Q) +
+      ``out_gain`` (Q) = **``3 * Q`` 个参数**（``Q=4`` 时精确等于 1 层 PQC 的 12 个参数），
+      固定正交投影矩阵为 buffer，输出尺度与单层量子读出自然对齐。
+    * ``param_mode="linear"``：在三角单项式基上接 ``nn.Linear(D_trig, out_features)``。
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        *,
+        param_mode: str = "matched",
+        near_identity_init: bool = False,
+        init_std: float = 0.05,
+    ):
+        super().__init__()
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
+        self.readout_dim = int(out_features)
+        self.param_mode = str(param_mode).lower()
+        if self.param_mode not in ("matched", "linear"):
+            raise ValueError(f"未知 param_mode {param_mode!r}，可选 'matched' / 'linear'")
+
+        q = self.in_features
+        self._pairs = [(i, j) for i in range(q) for j in range(i + 1, q)]
+        self.trig_dim = 2 * q + 4 * len(self._pairs)
+
+        self.in_scale = nn.Parameter(torch.ones(q, dtype=torch.float32))
+        self.in_shift = nn.Parameter(torch.zeros(q, dtype=torch.float32))
+        if near_identity_init:
+            with torch.no_grad():
+                self.in_scale.add_(torch.randn(q) * float(init_std))
+                self.in_shift.add_(torch.randn(q) * float(init_std))
+        else:
+            with torch.no_grad():
+                self.in_shift.uniform_(-math.pi / 4.0, math.pi / 4.0)
+
+        if self.param_mode == "matched":
+            self.out_gain = nn.Parameter(torch.ones(q, dtype=torch.float32))
+            # 固定正交投影（buffer，不计入可训练参数）：使输出保持单位范数尺度
+            raw = torch.randn(max(self.trig_dim, self.out_features),
+                              max(self.trig_dim, self.out_features))
+            q_mat, _ = torch.linalg.qr(raw)
+            proj = q_mat[:self.trig_dim, :self.out_features].contiguous()
+            # 缩放使其与 Pauli 期望读出的初始 std (~0.25-0.35) 量级对齐
+            proj = proj * math.sqrt(self.trig_dim / max(self.out_features, 1)) * 0.65
+            self.register_buffer("proj", proj.to(torch.float32))
+            self.linear_out = None
+        else:
+            self.out_gain = None
+            self.register_buffer("proj", torch.empty(0))
+            self.linear_out = nn.Linear(self.trig_dim, self.out_features)
+
+    def _trig_features(self, x: torch.Tensor) -> torch.Tensor:
+        u = x * self.in_scale + self.in_shift
+        c = torch.cos(u)
+        s = torch.sin(u)
+        feats = [c, s]
+        if self._pairs:
+            idx_i = [i for i, _ in self._pairs]
+            idx_j = [j for _, j in self._pairs]
+            ci, cj = c[:, idx_i], c[:, idx_j]
+            si, sj = s[:, idx_i], s[:, idx_j]
+            feats.extend([ci * cj, si * sj, ci * sj, si * cj])
+        return torch.cat(feats, dim=-1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        phi = self._trig_features(x.to(torch.float32))
+        if self.param_mode == "matched":
+            out = phi @ self.proj
+            # 按周期索引广播 Q 维可学习通道增益（总可训练参数 = 3*Q）
+            gain_idx = torch.arange(self.out_features, device=out.device) % self.in_features
+            return out * self.out_gain[gain_idx]
+        return torch.tanh(self.linear_out(phi))
+
+
+def parameter_breakdown(model: nn.Module) -> dict[str, float | int]:
+    """按组件分解模型参数量，显式分离量子参数与经典封装参数。"""
+    embed_p = sum(p.numel() for p in getattr(model, "embed").parameters()) if hasattr(model, "embed") else 0
+    ce = getattr(model, "causal_encoder", None)
+    conv_p = sum(p.numel() for p in ce.causal_conv.parameters()) if ce is not None else 0
+    head_p = sum(p.numel() for p in getattr(model, "head").parameters()) if hasattr(model, "head") else 0
+    ttype = getattr(model, "transform_type", None)
+    tf = getattr(model, "transform", None)
+    tf_p = sum(p.numel() for p in tf.parameters()) if tf is not None else 0
+    if ttype == "quantum":
+        q_p, c_tf_p = tf_p, 0
+    elif hasattr(model, "weights") and hasattr(model, "qnode"):
+        q_p = int(model.weights.numel())
+        c_tf_p = (
+            sum(p.numel() for p in model.input_proj.parameters())
+            if hasattr(model, "input_proj")
+            else 0
+        )
+    else:
+        q_p, c_tf_p = 0, tf_p
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    other = total - (embed_p + conv_p + q_p + c_tf_p + head_p)
+    return {
+        "embed": int(embed_p),
+        "causal_conv": int(conv_p),
+        "transform_quantum": int(q_p),
+        "transform_classical": int(c_tf_p),
+        "head": int(head_p),
+        "other": int(other),
+        "total": int(total),
+        "trainable": int(trainable),
+        "quantum_param_share": float(q_p / max(total, 1)),
+    }
 
 
 def _build_head(n_in: int, vocab_size: int, head: str = "linear", hidden: int = 32) -> nn.Module:
@@ -225,9 +347,9 @@ class RichQuantumLM(TinyLM):
         if context_mode not in ("token", "causal"):
             raise ValueError(f"未知 context_mode {context_mode!r}，可选 'token' / 'causal'")
         ttype = str(transform_type).lower()
-        if ttype not in ("quantum", "classical", "identity"):
+        if ttype not in ("quantum", "classical", "classical_trig", "identity"):
             raise ValueError(
-                f"未知 transform_type {transform_type!r}，可选 'quantum' / 'classical' / 'identity'"
+                f"未知 transform_type {transform_type!r}，可选 'quantum' / 'classical' / 'classical_trig' / 'identity'"
             )
 
         self.vocab_size = int(vocab_size)
@@ -262,7 +384,7 @@ class RichQuantumLM(TinyLM):
         # 2. 计算读出维度并从确定性偏移 RNG 初始化分类头（同 readout_dim + head_type 下逐元素一致）
         if ttype == "quantum":
             rdim = n_readout(self.n_qubits, self.observables)
-        elif ttype == "classical":
+        elif ttype in ("classical", "classical_trig"):
             rdim = (
                 int(classical_width)
                 if classical_width is not None
@@ -297,14 +419,31 @@ class RichQuantumLM(TinyLM):
                 nn.Linear(self.n_qubits, self.readout_dim),
                 nn.Tanh(),
             )
-            # 与量子臂 ``near_identity_init`` 对称：量子臂把旋转角初始化为
-            # N(0, init_std^2) 使初始线路接近恒等；经典臂同样用小权重 +
-            # 零偏置，避免「只给一边加初始化补丁」造成的对照不干净。
-            # 历史配置里 add_classical 的 near_identity_init=False，此分支不生效。
+            # 修复历史 near_identity_init 16× 失衡 bug：
+            # 量子臂近恒等初始化（旋转角 ~ N(0, init_std^2) => U ≈ I）产生 O(1) 输出（std ~ 0.3）；
+            # 旧版经典臂把权重设成 N(0, init_std^2) 实际是「近零初始化」（std ~ 0.024）。
+            # 此处改为半正交恒等平铺 + 微小扰动，使两臂在 near_identity_init=True 下初始输出尺度对齐。
             if self.near_identity_init:
                 with torch.no_grad():
-                    nn.init.normal_(self.transform[0].weight, std=init_std)
+                    w = self.transform[0].weight  # (readout_dim, n_qubits)
+                    rows = []
+                    n_blocks = (self.readout_dim + self.n_qubits - 1) // self.n_qubits
+                    for _ in range(n_blocks):
+                        blk = torch.empty(self.n_qubits, self.n_qubits)
+                        nn.init.orthogonal_(blk)
+                        rows.append(blk)
+                    base = torch.cat(rows, dim=0)[:self.readout_dim]
+                    w.copy_(base * 0.55 + torch.randn_like(w) * float(init_std))
                     nn.init.zeros_(self.transform[0].bias)
+            self.q = None
+        elif ttype == "classical_trig":
+            self.transform = ClassicalTrigBilinearLayer(
+                in_features=self.n_qubits,
+                out_features=self.readout_dim,
+                param_mode="matched",
+                near_identity_init=self.near_identity_init,
+                init_std=init_std,
+            )
             self.q = None
         else:
             self.transform = nn.Identity()

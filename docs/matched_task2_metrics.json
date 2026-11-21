@@ -1,0 +1,602 @@
+{
+  "task": "Regime II Clean Matched Task 2 (independent char corpus, canonical 30-Pauli / 3 QWC)",
+  "question": "1) Does the legacy +0.3263 quantum overfitting gap disappear or persist once scale=5 vs 1 and near_identity_init confounds are removed? 2) Does the L0 4-qubit PQC outperform a fair 12-param ClassicalTrigBilinearLayer surrogate?",
+  "config": {
+    "qubits": 4,
+    "observables": "z+x+y+zzall+xxall+yyall",
+    "readout_dim": 30,
+    "qwc_groups": 3,
+    "seq_len": 16,
+    "batch_size": 8,
+    "steps": 400,
+    "eval_every": 100,
+    "lr": 0.01,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "vocab_size": 29,
+    "train_chars": 3171,
+    "val_chars": 947,
+    "val_context_k4_coverage": 0.3867,
+    "train_k4_entropy_floor": 0.3309
+  },
+  "matched_control_assertion": {
+    "matched_arms": [
+      "caus_q_rich30",
+      "caus_classical_tanh",
+      "caus_classical_trig"
+    ],
+    "differing_key": "transform_type",
+    "n_identical_fields": 13,
+    "all_other_fields_identical": true
+  },
+  "weight_control_checks": {
+    "all_passed": true,
+    "per_seed": {
+      "0": {
+        "passed": true
+      },
+      "1": {
+        "passed": true
+      },
+      "2": {
+        "passed": true
+      },
+      "3": {
+        "passed": true
+      },
+      "4": {
+        "passed": true
+      }
+    },
+    "init_readout_std_seed0": {
+      "caus_q_rich30": {
+        "raw_std": 0.32610976696014404,
+        "into_head_std": 0.32610976696014404,
+        "min": -0.8159566521644592,
+        "max": 0.9734742045402527
+      },
+      "caus_classical_tanh": {
+        "raw_std": 0.395105242729187,
+        "into_head_std": 0.395105242729187,
+        "min": -0.9518429636955261,
+        "max": 0.9426215887069702
+      },
+      "caus_classical_trig": {
+        "raw_std": 0.3764879107475281,
+        "into_head_std": 0.3764879107475281,
+        "min": -1.0469242334365845,
+        "max": 1.2281893491744995
+      }
+    }
+  },
+  "arms": {
+    "caus_q_rich30": {
+      "params": {
+        "embed": 464,
+        "causal_conv": 260,
+        "transform_quantum": 12,
+        "transform_classical": 0,
+        "head": 2909,
+        "other": 1,
+        "total": 3646,
+        "trainable": 3646,
+        "quantum_param_share": 0.0032912781130005485
+      },
+      "readout_dim": 30,
+      "qwc_groups": 3,
+      "is_matched_arm": true,
+      "train_loss_mean": 2.099170578424655,
+      "train_loss_std": 0.007404818646108622,
+      "val_loss_mean": 2.4803865559895835,
+      "val_loss_std": 0.029116226552009038,
+      "val_perplexity_mean": 11.949911111196226,
+      "val_perplexity_std": 0.3451397274530129,
+      "generalization_gap_mean": 0.3812159775649285,
+      "generalization_gap_std": 0.03537094466913684,
+      "final_out_scale_mean": 1.568446159362793,
+      "final_out_scale_std": 0.06594742921320479,
+      "total_seconds_mean": 31.569215721799992,
+      "total_seconds_std": 0.34376657486799816,
+      "at_step_300": {
+        "train_loss_mean": 2.1494818730569962,
+        "val_loss_mean": 2.4882915751139327,
+        "generalization_gap_mean": 0.33880970205693595
+      },
+      "per_seed": [
+        {
+          "seed": 0,
+          "train_loss": 2.1032937687246043,
+          "val_loss": 2.491321563720703,
+          "generalization_gap": 0.38802779499609885,
+          "final_out_scale": 1.6214231252670288,
+          "seconds": 31.30459927999982
+        },
+        {
+          "seed": 1,
+          "train_loss": 2.095164025848235,
+          "val_loss": 2.504412078857422,
+          "generalization_gap": 0.40924805300918665,
+          "final_out_scale": 1.633233666419983,
+          "seconds": 31.43308163599795
+        },
+        {
+          "seed": 2,
+          "train_loss": 2.0895353729401402,
+          "val_loss": 2.504632822672526,
+          "generalization_gap": 0.4150974497323858,
+          "final_out_scale": 1.5488426685333252,
+          "seconds": 31.72285434600053
+        },
+        {
+          "seed": 3,
+          "train_loss": 2.108835646854573,
+          "val_loss": 2.437486267089844,
+          "generalization_gap": 0.3286506202352708,
+          "final_out_scale": 1.570307731628418,
+          "seconds": 32.098980061000475
+        },
+        {
+          "seed": 4,
+          "train_loss": 2.099024077755722,
+          "val_loss": 2.464080047607422,
+          "generalization_gap": 0.3650559698517002,
+          "final_out_scale": 1.46842360496521,
+          "seconds": 31.286563286001183
+        }
+      ]
+    },
+    "caus_classical_tanh": {
+      "params": {
+        "embed": 464,
+        "causal_conv": 260,
+        "transform_quantum": 0,
+        "transform_classical": 150,
+        "head": 2909,
+        "other": 1,
+        "total": 3784,
+        "trainable": 3784,
+        "quantum_param_share": 0.0
+      },
+      "readout_dim": 30,
+      "qwc_groups": 0,
+      "is_matched_arm": true,
+      "train_loss_mean": 2.143512849472276,
+      "train_loss_std": 0.011548278019971632,
+      "val_loss_mean": 2.442499287923177,
+      "val_loss_std": 0.039951294138591616,
+      "val_perplexity_mean": 11.509070538709038,
+      "val_perplexity_std": 0.4573581582579333,
+      "generalization_gap_mean": 0.2989864384509012,
+      "generalization_gap_std": 0.03986923107520729,
+      "final_out_scale_mean": 0.9273341774940491,
+      "final_out_scale_std": 0.04096210208560472,
+      "total_seconds_mean": 1.2056375189997197,
+      "total_seconds_std": 0.059377770751927204,
+      "at_step_300": {
+        "train_loss_mean": 2.188719518460221,
+        "val_loss_mean": 2.442376047770182,
+        "generalization_gap_mean": 0.2536565293099612
+      },
+      "per_seed": [
+        {
+          "seed": 0,
+          "train_loss": 2.1487143530917527,
+          "val_loss": 2.4539881388346356,
+          "generalization_gap": 0.3052737857428829,
+          "final_out_scale": 0.93087238073349,
+          "seconds": 1.2741704660002142
+        },
+        {
+          "seed": 1,
+          "train_loss": 2.159116332854458,
+          "val_loss": 2.4135119120279946,
+          "generalization_gap": 0.25439557917353683,
+          "final_out_scale": 0.9357156753540039,
+          "seconds": 1.1952518360012618
+        },
+        {
+          "seed": 2,
+          "train_loss": 2.1396211930854836,
+          "val_loss": 2.4684176127115887,
+          "generalization_gap": 0.32879641962610506,
+          "final_out_scale": 0.9595399498939514,
+          "seconds": 1.1486688010008947
+        },
+        {
+          "seed": 3,
+          "train_loss": 2.1278190852409633,
+          "val_loss": 2.389787038167318,
+          "generalization_gap": 0.26196795292635455,
+          "final_out_scale": 0.8572190403938293,
+          "seconds": 1.2600578909987235
+        },
+        {
+          "seed": 4,
+          "train_loss": 2.1422932830887222,
+          "val_loss": 2.486791737874349,
+          "generalization_gap": 0.3444984547856267,
+          "final_out_scale": 0.9533238410949707,
+          "seconds": 1.1500386009975045
+        }
+      ]
+    },
+    "caus_classical_trig": {
+      "params": {
+        "embed": 464,
+        "causal_conv": 260,
+        "transform_quantum": 0,
+        "transform_classical": 12,
+        "head": 2909,
+        "other": 1,
+        "total": 3646,
+        "trainable": 3646,
+        "quantum_param_share": 0.0
+      },
+      "readout_dim": 30,
+      "qwc_groups": 0,
+      "is_matched_arm": true,
+      "train_loss_mean": 2.049821602519433,
+      "train_loss_std": 0.02133664306728773,
+      "val_loss_mean": 2.483361511230469,
+      "val_loss_std": 0.033508612184287724,
+      "val_perplexity_mean": 11.986892476122472,
+      "val_perplexity_std": 0.405870243764824,
+      "generalization_gap_mean": 0.4335399087110357,
+      "generalization_gap_std": 0.02749808494053532,
+      "final_out_scale_mean": 1.304659366607666,
+      "final_out_scale_std": 0.019987985380880213,
+      "total_seconds_mean": 1.525593050599855,
+      "total_seconds_std": 0.03720707951286691,
+      "at_step_300": {
+        "train_loss_mean": 2.1049587757743184,
+        "val_loss_mean": 2.4566751098632813,
+        "generalization_gap_mean": 0.35171633408896286
+      },
+      "per_seed": [
+        {
+          "seed": 0,
+          "train_loss": 2.027992339589488,
+          "val_loss": 2.4833529154459635,
+          "generalization_gap": 0.4553605758564756,
+          "final_out_scale": 1.3343737125396729,
+          "seconds": 1.4847412089984573
+        },
+        {
+          "seed": 1,
+          "train_loss": 2.0783728163446016,
+          "val_loss": 2.4884071350097656,
+          "generalization_gap": 0.41003431866516404,
+          "final_out_scale": 1.2962626218795776,
+          "seconds": 1.555804829000408
+        },
+        {
+          "seed": 2,
+          "train_loss": 2.039793009734034,
+          "val_loss": 2.450072479248047,
+          "generalization_gap": 0.41027946951401306,
+          "final_out_scale": 1.2795662879943848,
+          "seconds": 1.4867577379991417
+        },
+        {
+          "seed": 3,
+          "train_loss": 2.0369270506815695,
+          "val_loss": 2.45902582804362,
+          "generalization_gap": 0.42209877736205037,
+          "final_out_scale": 1.3045670986175537,
+          "seconds": 1.539753531000315
+        },
+        {
+          "seed": 4,
+          "train_loss": 2.0660227962474726,
+          "val_loss": 2.535949198404948,
+          "generalization_gap": 0.4699264021574754,
+          "final_out_scale": 1.3085271120071411,
+          "seconds": 1.5609079460009525
+        }
+      ]
+    },
+    "diag_unmatched_q_scale5": {
+      "params": {
+        "embed": 464,
+        "causal_conv": 260,
+        "transform_quantum": 12,
+        "transform_classical": 0,
+        "head": 2909,
+        "other": 0,
+        "total": 3645,
+        "trainable": 3645,
+        "quantum_param_share": 0.0032921810699588477
+      },
+      "readout_dim": 30,
+      "qwc_groups": 3,
+      "is_matched_arm": false,
+      "train_loss_mean": 2.031468447967989,
+      "train_loss_std": 0.027080301735245296,
+      "val_loss_mean": 2.537627868652344,
+      "val_loss_std": 0.0360716362965847,
+      "val_perplexity_mean": 12.656191425576566,
+      "val_perplexity_std": 0.454197096051206,
+      "generalization_gap_mean": 0.5061594206843545,
+      "generalization_gap_std": 0.041548596504214004,
+      "final_out_scale_mean": 5.0,
+      "final_out_scale_std": 0.0,
+      "total_seconds_mean": 31.24030563819906,
+      "total_seconds_std": 0.31286355698569956,
+      "at_step_300": {
+        "train_loss_mean": 2.0910943582429358,
+        "val_loss_mean": 2.543504384358724,
+        "generalization_gap_mean": 0.452410026115788
+      },
+      "per_seed": [
+        {
+          "seed": 0,
+          "train_loss": 2.047417885095031,
+          "val_loss": 2.5624481201171876,
+          "generalization_gap": 0.5150302350221567,
+          "final_out_scale": 5.0,
+          "seconds": 31.158863972999825
+        },
+        {
+          "seed": 1,
+          "train_loss": 2.0093422702808477,
+          "val_loss": 2.4856885274251304,
+          "generalization_gap": 0.4763462571442827,
+          "final_out_scale": 5.0,
+          "seconds": 30.84882678699796
+        },
+        {
+          "seed": 2,
+          "train_loss": 2.0098565068077203,
+          "val_loss": 2.5795389811197915,
+          "generalization_gap": 0.5696824743120712,
+          "final_out_scale": 5.0,
+          "seconds": 31.513181669000915
+        },
+        {
+          "seed": 3,
+          "train_loss": 2.0195147979199586,
+          "val_loss": 2.5266985575358074,
+          "generalization_gap": 0.5071837596158488,
+          "final_out_scale": 5.0,
+          "seconds": 31.602220758999465
+        },
+        {
+          "seed": 4,
+          "train_loss": 2.0712107797363895,
+          "val_loss": 2.5337651570638022,
+          "generalization_gap": 0.4625543773274128,
+          "final_out_scale": 5.0,
+          "seconds": 31.07843500299714
+        }
+      ]
+    }
+  },
+  "paired_comparisons": {
+    "q_minus_tanh|train_loss": {
+      "n": 5,
+      "mean_diff": -0.04434227104762103,
+      "std_diff": 0.016301276714715207,
+      "ci95_low": -0.06458297946904024,
+      "ci95_high": -0.024101562626201823,
+      "p_value": 0.003692805566242041,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        -0.045421,
+        -0.063952,
+        -0.050086,
+        -0.018983,
+        -0.043269
+      ],
+      "p_holm": 0.02584963896369429,
+      "holm_significant": true
+    },
+    "q_minus_tanh|val_loss": {
+      "n": 5,
+      "mean_diff": 0.03788726806640623,
+      "std_diff": 0.04056469611238892,
+      "ci95_low": -0.012480454694423285,
+      "ci95_high": 0.08825499082723574,
+      "p_value": 0.10501112266431195,
+      "significant_95_uncorrected": false,
+      "per_seed_diff": [
+        0.037333,
+        0.0909,
+        0.036215,
+        0.047699,
+        -0.022712
+      ],
+      "p_holm": 0.28889994909025135,
+      "holm_significant": false
+    },
+    "q_minus_tanh|generalization_gap": {
+      "n": 5,
+      "mean_diff": 0.08222953911402726,
+      "std_diff": 0.048311713198001725,
+      "ci95_low": 0.022242624144522882,
+      "ci95_high": 0.14221645408353165,
+      "p_value": 0.019006545011495162,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        0.082754,
+        0.154852,
+        0.086301,
+        0.066683,
+        0.020558
+      ],
+      "p_holm": 0.09503272505747581,
+      "holm_significant": false
+    },
+    "q_minus_trig|train_loss": {
+      "n": 5,
+      "mean_diff": 0.04934897590522178,
+      "std_diff": 0.025049332895319125,
+      "ci95_low": 0.01824612107008277,
+      "ci95_high": 0.0804518307403608,
+      "p_value": 0.011643859955140922,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        0.075301,
+        0.016791,
+        0.049742,
+        0.071909,
+        0.033001
+      ],
+      "p_holm": 0.06986315973084553,
+      "holm_significant": false
+    },
+    "q_minus_trig|val_loss": {
+      "n": 5,
+      "mean_diff": -0.002974955240885446,
+      "std_diff": 0.0471204955048831,
+      "ci95_low": -0.06148277808682109,
+      "ci95_high": 0.0555328676050502,
+      "p_value": 0.8945566297338685,
+      "significant_95_uncorrected": false,
+      "per_seed_diff": [
+        0.007969,
+        0.016005,
+        0.05456,
+        -0.02154,
+        -0.071869
+      ],
+      "p_holm": 0.8945566297338685,
+      "holm_significant": false
+    },
+    "q_minus_trig|generalization_gap": {
+      "n": 5,
+      "mean_diff": -0.05232393114610723,
+      "std_diff": 0.05147555564279158,
+      "ci95_low": -0.11623927537529616,
+      "ci95_high": 0.011591413083081703,
+      "p_value": 0.08545155537439124,
+      "significant_95_uncorrected": false,
+      "per_seed_diff": [
+        -0.067333,
+        -0.000786,
+        0.004818,
+        -0.093448,
+        -0.10487
+      ],
+      "p_holm": 0.28889994909025135,
+      "holm_significant": false
+    },
+    "trig_minus_tanh|train_loss": {
+      "n": 5,
+      "mean_diff": -0.09369124695284281,
+      "std_diff": 0.017658471940710612,
+      "ci95_low": -0.11561713582491454,
+      "ci95_high": -0.07176535808077109,
+      "p_value": 0.00028902325677300847,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        -0.120722,
+        -0.080744,
+        -0.099828,
+        -0.090892,
+        -0.07627
+      ],
+      "p_holm": 0.0026012093109570762,
+      "holm_significant": true
+    },
+    "trig_minus_tanh|val_loss": {
+      "n": 5,
+      "mean_diff": 0.04086222330729168,
+      "std_diff": 0.03764966113391593,
+      "ci95_low": -0.005886005467263235,
+      "ci95_high": 0.08761045208184659,
+      "p_value": 0.07222498727256284,
+      "significant_95_uncorrected": false,
+      "per_seed_diff": [
+        0.029365,
+        0.074895,
+        -0.018345,
+        0.069239,
+        0.049157
+      ],
+      "p_holm": 0.28889994909025135,
+      "holm_significant": false
+    },
+    "trig_minus_tanh|generalization_gap": {
+      "n": 5,
+      "mean_diff": 0.13455347026013448,
+      "std_diff": 0.03255694371914361,
+      "ci95_low": 0.09412868535252769,
+      "ci95_high": 0.17497825516774126,
+      "p_value": 0.000762154177542596,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        0.150087,
+        0.155639,
+        0.081483,
+        0.160131,
+        0.125428
+      ],
+      "p_holm": 0.006097233420340768,
+      "holm_significant": true
+    },
+    "diag_scale5_minus_matched_q|train_loss": {
+      "n": 5,
+      "mean_diff": -0.06770213045666554,
+      "std_diff": 0.025836558727207404,
+      "ci95_low": -0.09978245526571625,
+      "ci95_high": -0.035621805647614836,
+      "p_value": 0.004234352561424412,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        -0.055876,
+        -0.085822,
+        -0.079679,
+        -0.089321,
+        -0.027813
+      ],
+      "p_holm": 0.009705237076505781,
+      "holm_significant": true
+    },
+    "diag_scale5_minus_matched_q|val_loss": {
+      "n": 5,
+      "mean_diff": 0.057241312662760446,
+      "std_diff": 0.04316392836087193,
+      "ci95_low": 0.0036462167960193623,
+      "ci95_high": 0.11083640852950152,
+      "p_value": 0.04133507249663795,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        0.071127,
+        -0.018724,
+        0.074906,
+        0.089212,
+        0.069685
+      ],
+      "p_holm": 0.04133507249663795,
+      "holm_significant": true
+    },
+    "diag_scale5_minus_matched_q|generalization_gap": {
+      "n": 5,
+      "mean_diff": 0.12494344311942598,
+      "std_diff": 0.04431145455671758,
+      "ci95_low": 0.06992350528830762,
+      "ci95_high": 0.17996338095054434,
+      "p_value": 0.003235079025501927,
+      "significant_95_uncorrected": true,
+      "per_seed_diff": [
+        0.127002,
+        0.067098,
+        0.154585,
+        0.178533,
+        0.097498
+      ],
+      "p_holm": 0.009705237076505781,
+      "holm_significant": true
+    }
+  },
+  "interpretation": {
+    "confound_resolution": "Matched L0 quantum gap = 0.3812 vs matched classical tanh = 0.2990 (Δ=+0.0822, p_holm=0.09503) and fair 12-param classical trig = 0.4335 (Δ=-0.0523, p_holm=0.2889). Re-introducing the legacy scale=5.0 + ni=True confound alone shifts quantum gap to 0.5062 (Δ vs matched Q = +0.1249, p_holm=0.009705).",
+    "fair_surrogate_verdict": "Matched Q val=2.4804±0.0291 vs 12-param ClassicalTrig val=2.4834±0.0335 (Δ=-0.0030, p_holm=0.8946) at 20.7× wall-clock cost; quantum params are only 12/3646 (0.33%)."
+  },
+  "wallclock_seconds_total": 96.19269246300246
+}
