@@ -616,8 +616,8 @@ def main() -> None:
         args.workers = 2
 
     train_text, val_text = load_corpus_split()
-    train_data, vocab_size, stoi, itos = build_char_data(train_text)
-    val_data, _, _, _ = build_char_data(val_text, stoi=stoi)
+    _train_data, vocab_size, stoi, _itos = build_char_data(train_text)
+    build_char_data(val_text, stoi=stoi)
     vocab_size = int(vocab_size)
 
     # Part 1: 信息论 N-Gram 条件熵下界与精确经验 Oracle 轨迹

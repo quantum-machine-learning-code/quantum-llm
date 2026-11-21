@@ -57,7 +57,7 @@ def check_data_and_entropy() -> None:
     """检查末字符采样覆盖修复（off-by-one bug）、留出验证集词表闭合性与经验条件熵下界。"""
     text = load_corpus()
     assert len(text) == 1668, f"内置语料长度应为 1668，实际 {len(text)}"
-    data, vocab_size, stoi, _itos = build_char_data(text=text)
+    _data, vocab_size, stoi, _itos = build_char_data(text=text)
     assert vocab_size == 31, f"内置语料词表应为 31，实际 {vocab_size}"
 
     train_text, val_text = load_corpus_split()
@@ -929,7 +929,7 @@ def check_quantum_attention() -> None:
     with torch.no_grad():
         M_sum = qx.povm_effects().sum(dim=0)
         assert torch.allclose(M_sum, torch.eye(8, dtype=M_sum.dtype), atol=1e-5), "Quixer POVM 完备性失败"
-        logp, probs, p_succ = qx.forward_with_stats(x_id[:4])
+        _logp, probs, p_succ = qx.forward_with_stats(x_id[:4])
         assert probs.shape == (4, 4)
         assert torch.allclose(probs.sum(dim=-1), torch.ones(4), atol=1e-5)
         assert bool((p_succ > 0).all() and (p_succ <= 1.0 + 1e-5).all())

@@ -374,7 +374,7 @@ class QuantumSwapTestAttention(nn.Module):
         self.eval()
         if rng is None:
             rng = np.random.default_rng(0)
-        B, T = x.shape
+        _, T = x.shape
         n_ctx = T - 1
         q_amp, k_amp, v = self._prepare_states(x)
         exact_overlap = torch.einsum("bd,bnd->bn", q_amp, k_amp).pow(2).clamp(0.0, 1.0)

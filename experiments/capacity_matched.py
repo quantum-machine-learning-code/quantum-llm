@@ -160,7 +160,7 @@ def _figure(report: dict, path: Path) -> None:
         lines = [
             "容量匹配扫描的结论边界", "",
             f"默认 L=1：量子 {qp[0]} 参数 vs 经典 {cp[0]} 参数（差 {cp[0] // qp[0]}×）",
-            f"L=20：两者同为 240 参数，参数量差 = 0", "",
+            "L=20：两者同为 240 参数，参数量差 = 0", "",
             "但提高层数同时改变了线路深度、表达力与梯度尺度，",
             "所以「参数量相等」不等于「只差量子/经典这一件事」。",
             "本扫描把隐藏混杂变成被测量的轴，而非消除它。", "",
@@ -203,7 +203,7 @@ def main() -> None:
     tr, _ = split_table(enumerate_table("+"), "holdout_pairs", 0.2, 0)
     x, y = build_tensors(tr, "+")
     xt, yt = x[:32], y[:32]
-    xp, yp = x[:128], y[:128]
+    xp, _yp = x[:128], y[:128]
 
     rows = []
     for L in [int(v) for v in args.layers.split(",")]:

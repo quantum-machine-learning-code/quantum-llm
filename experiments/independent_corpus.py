@@ -247,8 +247,8 @@ def main() -> int:
         args.workers = 2
 
     train_text, val_text = load_independent_split()
-    train_data, vocab_size, stoi, _ = build_char_data(train_text)
-    val_data, _, _, _ = build_char_data(val_text, stoi=stoi)
+    _train_data, vocab_size, stoi, _ = build_char_data(train_text)
+    build_char_data(val_text, stoi=stoi)
     vocab_size = int(vocab_size)
 
     # ---- 语料统计 ----

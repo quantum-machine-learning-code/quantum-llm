@@ -411,7 +411,6 @@ def build_verdict(report: dict) -> dict:
     """只判装置有效性，不判优劣；结论措辞必须能挡住误读。"""
     qc = report["contracts"]["A0_quantum_feedback"]
     qn = report["contracts"]["A1_quantum_no_feedback"]
-    cc = report["contracts"]["CTRL_classical_feedback"]
 
     p1_effect = (qc["P1_prefix_logits_mean_abs_delta"]
                  - qn["P1_prefix_logits_mean_abs_delta"])

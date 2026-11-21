@@ -55,7 +55,6 @@ from grokking_scan import (  # noqa: E402
     PHASE_GEN_ACC,
     PHASE_MEM_ACC,
     RANDOM_BASELINE_ACCURACY,
-    _phase_detect,
     run_one,
 )
 from qml_lab.arithmetic import context_overlap, enumerate_table, split_table  # noqa: E402
@@ -604,8 +603,6 @@ def main() -> None:
     n_rich_grok = sum(per_condition[k]["aggregate"]["n_grokking_seeds"] for k in rich_keys)
     n_mlp_grok = sum(per_condition[k]["aggregate"]["n_grokking_seeds"] for k in mlp_keys)
     n_rich_mem = sum(per_condition[k]["aggregate"]["n_memorized_seeds"] for k in rich_keys)
-    n_runs_rich = sum(len(per_condition[k]["curves"]) for k in rich_keys)
-    n_runs_mlp = sum(len(per_condition[k]["curves"]) for k in mlp_keys)
 
     verdict, summary = build_verdict(per_condition, s2_steps, s2_every)
     # stage1 的完整曲线已单独存在 grokking_no_prior_pilot.json，这里只留
